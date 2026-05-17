@@ -1,3 +1,4 @@
+#include <format>
 #include <vector>
 
 #include "OffsetFinder/OffsetFinder.h"
@@ -5,6 +6,7 @@
 
 #include "Platform.h"
 
+#include "Menu/Logger.h"
 /* UObject */
 int32_t OffsetFinder::FindUObjectFlagsOffset()
 {
@@ -193,7 +195,7 @@ int32_t FindNameOffsetForSomeClass(std::function<bool(int32_t Value)> IsPotentia
 			}
 
 			/* This shouldn't be the case, so log it as an info but continue, as the first offset is still likely the right one. */
-			std::cerr << std::format("Dumper-7: Another [UObject/FField]::Name offset (0x{:04X}) is also considered valid.\n", Info.Offset);
+			LogError("%s", std::format("Dumper-7: Another [UObject/FField]::Name offset (0x{:04X}) is also considered valid.\n", Info.Offset).c_str());
 		}
 	}
 
@@ -278,7 +280,7 @@ void OffsetFinder::FixupHardcodedOffsets()
 
 		if (IsValidPtr(PossibleNextPtrOrBool0) && IsValidPtr(PossibleNextPtrOrBool1) && IsValidPtr(PossibleNextPtrOrBool2))
 		{
-			std::cerr << "Applaying fix to hardcoded offsets \n" << std::endl;
+			LogError("Applaying fix to hardcoded offsets \n");
 
 			Settings::Internal::bUseMaskForFieldOwner = true;
 
@@ -431,7 +433,8 @@ int32_t OffsetFinder::FindUFieldNextOffset()
 	const auto HighestUObjectOffset = std::max({ Off::UObject::Index, Off::UObject::Name, Off::UObject::Flags, Off::UObject::Outer, Off::UObject::Class });
 #define max(a,b)            (((a) > (b)) ? (a) : (b))
 
-	return GetValidPointerOffset(KismetSystemLibraryChild, KismetStringLibraryChild, Align(HighestUObjectOffset + 0x4, static_cast<int>(sizeof(void*))), 0x60);
+	/* MaxOffset bumped 0x60→0x100 — some games (e.g. ArenaBreakout UE 4.26) shift UField::Next by +sizeof(void*). */
+	return GetValidPointerOffset(KismetSystemLibraryChild, KismetStringLibraryChild, Align(HighestUObjectOffset + 0x4, static_cast<int>(sizeof(void*))), 0x100);
 }
 
 /* FField */
@@ -440,7 +443,8 @@ int32_t OffsetFinder::FindFFieldNextOffset()
 	const void* GuidChildren = ObjectArray::FindStructFast("Guid").GetChildProperties().GetAddress();
 	const void* VectorChildren = ObjectArray::FindStructFast("Vector").GetChildProperties().GetAddress();
 
-	return GetValidPointerOffset(GuidChildren, VectorChildren, Off::FField::Owner + 0x8, 0x48);
+	/* MaxOffset bumped 0x48→0x100 for non-standard FField layouts. */
+	return GetValidPointerOffset(GuidChildren, VectorChildren, Off::FField::Owner + 0x8, 0x100);
 }
 
 int32_t OffsetFinder::FindFFieldNameOffset()
@@ -712,7 +716,8 @@ int32_t OffsetFinder::FindChildPropertiesOffset()
 	const void* ObjA = ObjectArray::FindStructFast("Color").GetAddress();
 	const void* ObjB = ObjectArray::FindStructFast("Guid").GetAddress();
 
-	return GetValidPointerOffset(ObjA, ObjB, Off::UStruct::Children + 0x08, 0x80);
+	/* MaxOffset bumped 0x80→0x100 — ChildProperties may sit further out on shifted-layout games. */
+	return GetValidPointerOffset(ObjA, ObjB, Off::UStruct::Children + 0x08, 0x100);
 }
 
 int32_t OffsetFinder::FindStructSizeOffset()
@@ -1198,7 +1203,7 @@ int32_t OffsetFinder::FindDatatableRowMapOffset()
 
 	if (!DataTable)
 	{
-		std::cerr << "\nDumper-7: [DataTable] Couldn't find \"DataTable\" class, assuming default layout.\n" << std::endl;
+		LogError("\nDumper-7: [DataTable] Couldn't find \"DataTable\" class, assuming default layout.\n");
 		return (Off::UObject::Outer + UObjectOuterSize + RowStructSize);
 	}
 
@@ -1206,7 +1211,7 @@ int32_t OffsetFinder::FindDatatableRowMapOffset()
 
 	if (!RowStructProp)
 	{
-		std::cerr << "\nDumper-7: [DataTable] Couldn't find \"RowStruct\" property, assuming default layout.\n" << std::endl;
+		LogError("\nDumper-7: [DataTable] Couldn't find \"RowStruct\" property, assuming default layout.\n");
 		return (Off::UObject::Outer + UObjectOuterSize + RowStructSize);
 	}
 

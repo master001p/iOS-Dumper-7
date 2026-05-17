@@ -46,61 +46,33 @@ void FNameEntry::Init(const uint8* FirstChunkPtr, int64 NameEntryStringOffset)
         Off::FNameEntry::NamePool::StringOffset = (int32)NameEntryStringOffset;
         Off::FNameEntry::NamePool::HeaderOffset = (int32)NameEntryStringOffset == 6 ? 4 : 0;
 
-        LogSuccess("Dumper-7: [FNameEntry] NamePool initialized (Shift: %d, Stride: %d)", 0, Off::InSDK::NameArray::FNameEntryStride);
+        LogSuccess("Dumper-7: [FNameEntry] NamePool initialized (Stride: %d)", Off::InSDK::NameArray::FNameEntryStride);
 
+        /* Standard UE 4.23+ FNamePool entry reader (upstream Dumper-7 layout).
+         * Header is 2 bytes at HeaderOffset; top 10 bits = name length, bit 0 = wide flag.
+         * NameLen == 0 indicates a numbered entry referencing a base by index. */
         GetStr = [](uint8* NameEntry) -> UnrealString
         {
-            uint16* Entry = reinterpret_cast<uint16*>(NameEntry);
-            if (int16 Len = *Entry >> 6)
+            const uint16 HeaderWithoutNumber = *reinterpret_cast<uint16*>(NameEntry + Off::FNameEntry::NamePool::HeaderOffset);
+            const int32 NameLen = HeaderWithoutNumber >> 6;
+
+            if (NameLen == 0)
             {
-                if ((*Entry & 1) == 0)
-                {
-                    std::string Buffer(Len, '\0');
-                    memcpy(&Buffer[0], (char*)(Entry + 1), Len);
+                const int32 EntryIdOffset = Off::FNameEntry::NamePool::StringOffset + ((Off::FNameEntry::NamePool::StringOffset == 6) * 2);
 
-                    uint32 Key = 0;
-            
-                    switch (Len % 9)
-                    {
-                    case 0u:
-                            Key = ((Len & 0x1F) + Len);
-                        break;
-                    case 1u:
-                            Key = ((Len ^ 0xDF) + Len);
-                        break;
-                    case 2u:
-                            Key = ((Len | 0xCF) + Len);
-                        break;
-                    case 3u:
-                            Key = (33 * Len);
-                        break;
-                    case 4u:
-                            Key = (Len + (Len >> 2));
-                        break;
-                    case 5u:
-                            Key = (3 * Len + 5);
-                        break;
-                    case 6u:
-                            Key = (((4 * Len) | 5) + Len);
-                        break;
-                    case 7u:
-                            Key = (((Len >> 4) | 7) + Len);
-                        break;
-                    case 8u:
-                            Key = ((Len ^ 0xC) + Len);
-                        break;
-                    default:
-                            Key = ((Len ^ 0x40) + Len);
-                        break;
-                    }
+                const int32 NextEntryIndex = *reinterpret_cast<int32*>(NameEntry + EntryIdOffset);
+                const int32 Number = *reinterpret_cast<int32*>(NameEntry + EntryIdOffset + sizeof(int32));
 
-                    for (uint32 i = 0; i < Len; i++)
-                        Buffer[i] = (Key & 0x80) ^ ~Buffer[i];
-            
-                    return UtfN::StringToWString(Buffer);
-                }
+                if (Number > 0)
+                    return NameArray::GetNameEntry(NextEntryIndex).GetWString() + TEXT('_') + ToUEString(Number - 1);
+
+                return NameArray::GetNameEntry(NextEntryIndex).GetWString();
             }
-            return TEXT("None");
+
+            if (HeaderWithoutNumber & NameWideMask)
+                return UnrealString(reinterpret_cast<const TCHAR*>(NameEntry + Off::FNameEntry::NamePool::StringOffset), NameLen);
+
+            return UtfN::StringToWString(std::string(reinterpret_cast<const char*>(NameEntry + Off::FNameEntry::NamePool::StringOffset), NameLen));
         };
     }
     else
@@ -215,9 +187,9 @@ bool NameArray::InitializeNamePool(uint8* NamePool)
     LogInfo("Initializing FNamePool...");
 
     // Default initialization
-    Off::NameArray::MaxChunkIndex = 0xC0;
-    Off::NameArray::ByteCursor = 0xC4;
-    Off::NameArray::ChunksStart = 0xC8;
+    Off::NameArray::MaxChunkIndex = 0xC4;
+    Off::NameArray::ByteCursor = 0xC8;
+    Off::NameArray::ChunksStart = 0xD0 + sizeof(void*);
 
     bool bWasMaxChunkIndexFound = false;
     // Basic pointer check
@@ -592,7 +564,7 @@ void NameArray::PostInit()
         // Start with the standard UE4/UE5 value (14 bits)
         // 0x10 (16) is standard for many versions, but some games use 0xD like Fortnite (13)
         // User snippet implies 18 bits (0x3FFFF mask)
-        NameArray::FNameBlockOffsetBits = 18;
+        // NameArray::FNameBlockOffsetBits = 0;
 #if 0
         // Get the total number of chunks currently allocated in the name pool
         const int32 TotalChunks = NameArray::GetNumChunks();

@@ -1,3 +1,4 @@
+#include <format>
 #include <vector>
 #include <array>
 #include <algorithm>
@@ -10,6 +11,7 @@
 #include "Settings.h"
 #include "Platform.h"
 
+#include "Menu/Logger.h"
 /*
  * SDK emit knobs that follow Settings.h's UEVERSION.
  *
@@ -816,10 +818,13 @@ void CppGenerator::GenerateEnum(const EnumWrapper& Enum, StreamType& StructFile)
 	int32 NumValues = 0x0;
 	std::string MemberString;
 
+	const std::string UnderlyingType = GetEnumUnderlayingType(Enum);
 	for (const EnumCollisionInfo& Info : EnumValueIterator)
 	{
 		NumValues++;
-		MemberString += std::format("\t{:{}} = {},\n", Info.GetUniqueName(), 40, Info.GetValue());
+		/* Cast to the enum's underlying type so sentinel values like uint64-max (-1) don't
+		 * trigger "value cannot be narrowed to uintN" when emitted as a raw decimal literal. */
+		MemberString += std::format("\t{:{}} = static_cast<{}>({}),\n", Info.GetUniqueName(), 40, UnderlyingType, Info.GetValue());
 	}
 
 	if (!MemberString.empty()) [[likely]]
@@ -835,7 +840,7 @@ enum class {} : {}
 )", Enum.GetFullName()
   , NumValues
   , GetEnumPrefixedName(Enum)
-  , GetEnumUnderlayingType(Enum)
+  , UnderlyingType
   , MemberString);
 }
 
@@ -860,8 +865,14 @@ std::string CppGenerator::GetEnumPrefixedName(const EnumWrapper& Enum)
 	if (bIsUnique) [[likely]]
 		return ValidName;
 
-	/* Package::ESomeEnum */
-	return PackageManager::GetName(Enum.GetUnrealEnum().GetPackageIndex()) + "::" + ValidName;
+	/* Collision fallback: `Package_RawValidName`.
+	 *   - '_' (not '::') because enums sit at file scope; `enum class Pkg::Name` is ill-formed.
+	 *   - RAW name (Enum.GetValidName(), no 'E'-prefix munging) because two enums in the
+	 *     same package can collide AFTER 'E' prefixing — e.g. UE has both `EWeaponType`
+	 *     and `WeaponType` in SGFramework; both prefixed → `EWeaponType` → ambiguous.
+	 *     The raw names differ, so the disambiguator does too. */
+	return PackageManager::GetName(Enum.GetUnrealEnum().GetPackageIndex())
+		+ "_" + Enum.GetUnrealEnum().GetValidName();
 }
 
 std::string CppGenerator::GetEnumUnderlayingType(const EnumWrapper& Enum)
@@ -1653,7 +1664,7 @@ void CppGenerator::Generate()
 			ClassesFile = StreamType(Subfolder / (U8FileName + u8"_classes.hpp"));
 
 			if (!ClassesFile.is_open())
-				std::cerr << "Error opening file \"" << (FileName + "_classes.hpp") << "\"" << std::endl;
+				LogError("%s", std::format("Error opening file \"{}\"", (FileName + "_classes.hpp")).c_str());
 
 			WriteFileHead(ClassesFile, Package, EFileType::Classes);
 
@@ -1666,7 +1677,7 @@ void CppGenerator::Generate()
 			StructsFile = StreamType(Subfolder / (U8FileName + u8"_structs.hpp"));
 
 			if (!StructsFile.is_open())
-				std::cerr << "Error opening file \"" << (FileName + "_structs.hpp") << "\"" << std::endl;
+				LogError("%s", std::format("Error opening file \"{}\"", (FileName + "_structs.hpp")).c_str());
 
 			WriteFileHead(StructsFile, Package, EFileType::Structs);
 
@@ -1679,7 +1690,7 @@ void CppGenerator::Generate()
 			ParametersFile = StreamType(Subfolder / (U8FileName + u8"_parameters.hpp"));
 
 			if (!ParametersFile.is_open())
-				std::cerr << "Error opening file \"" << (FileName + "_parameters.hpp") << "\"" << std::endl;
+				LogError("%s", std::format("Error opening file \"{}\"", (FileName + "_parameters.hpp")).c_str());
 
 			WriteFileHead(ParametersFile, Package, EFileType::Parameters);
 		}
@@ -1689,7 +1700,7 @@ void CppGenerator::Generate()
 			FunctionsFile = StreamType(Subfolder / (U8FileName + u8"_functions.cpp"));
 
 			if (!FunctionsFile.is_open())
-				std::cerr << "Error opening file \"" << (FileName + "_functions.cpp") << "\"" << std::endl;
+				LogError("%s", std::format("Error opening file \"{}\"", (FileName + "_functions.cpp")).c_str());
 
 			WriteFileHead(FunctionsFile, Package, EFileType::Functions);
 		}
@@ -4205,16 +4216,18 @@ R"({
 
 		const int32 FNumberedDataInitialOffset = Settings::Internal::bUseCasePreservingName ? 0x2 : 0x0;
 
+		/* Use int32/uint32 directly (was uint8[4] + reinterpret_cast). The previous form did
+		 * pointer-to-int truncation which clang rejects; this also avoids strict-aliasing UB. */
 		FNumberedData.Properties =
 		{
 			PredefinedMember {
 				.Comment = "NOT AUTO-GENERATED PROPERTY",
-				.Type = "uint8", .Name = "Id", .Offset = FNumberedDataInitialOffset, .Size = sizeof(uint8), .ArrayDim = 0x4, .Alignment = alignof(uint8),
-				.bIsStatic = false, .bIsZeroSizeMember = false, .bIsBitField = false, .BitIndex = 0x0, .BitCount = 1
+				.Type = "int32", .Name = "Id", .Offset = FNumberedDataInitialOffset, .Size = sizeof(int32), .ArrayDim = 0x1, .Alignment = alignof(int32),
+				.bIsStatic = false, .bIsZeroSizeMember = false, .bIsBitField = false, .BitIndex = 0xFF
 			},
 			PredefinedMember{
 				.Comment = "NOT AUTO-GENERATED PROPERTY",
-				.Type = "uint8", .Name = "Number", .Offset = FNumberedDataInitialOffset + 0x4, .Size = sizeof(uint8), .ArrayDim = 0x4, .Alignment = alignof(uint8),
+				.Type = "uint32", .Name = "Number", .Offset = FNumberedDataInitialOffset + 0x4, .Size = sizeof(uint32), .ArrayDim = 0x1, .Alignment = alignof(uint32),
 				.bIsStatic = false, .bIsZeroSizeMember = false, .bIsBitField = false, .BitIndex = 0xFF
 			}
 		};
@@ -4223,9 +4236,9 @@ R"({
 		{
 			PredefinedFunction {
 				.CustomComment = "",
-				.ReturnType = "int32", .NameWithParams = "GetTypedId()", .Body = 
+				.ReturnType = "int32", .NameWithParams = "GetTypedId()", .Body =
 R"({
-	return reinterpret_cast<int32>(Id);
+	return Id;
 })",
 				.bIsStatic = false, .bIsConst = true, .bIsBodyInline = true
 			},
@@ -4233,7 +4246,7 @@ R"({
 				.CustomComment = "",
 				.ReturnType = "uint32", .NameWithParams = "GetNumber()", .Body =
 R"({
-	return reinterpret_cast<uint32>(Number);
+	return Number;
 })",
 				.bIsStatic = false, .bIsConst = true, .bIsBodyInline = true
 			},

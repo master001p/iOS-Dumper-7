@@ -149,8 +149,10 @@ void EnumManager::InitInternal()
 					
 				UnrealString NameWitPrefix = Name.ToWString();
 
-				if (!NameWitPrefix.ends_with(TEXT("_MAX")))
-					EnumMaxValue = std::max<int64>(EnumMaxValue, Value);
+				/* Include _MAX sentinels in EnumMaxValue: the emitted enum must hold them
+				 * too, so the underlying type has to be wide enough for the count, not
+				 * just for the highest "real" value. */
+				EnumMaxValue = std::max<int64>(EnumMaxValue, Value);
 
 				auto [NameIndex, bWasInserted] = UniqueEnumValueNames.FindOrAdd(MakeNameValid(NameWitPrefix.substr(NameWitPrefix.find_last_of(TEXT("::")) + 1)));
 
@@ -190,12 +192,12 @@ void EnumManager::InitInternal()
 				NewOrExistingInfo.MemberInfos.push_back(CurrentEnumValueInfo);
 			}
 
-			/* Initialize the size based on the highest value contained by this enum */
-			if (!NewOrExistingInfo.bWasEnumSizeInitialized && !NewOrExistingInfo.bWasInstanceFound)
-			{
-				EnumInitHelper::SetEnumSizeForValue(NewOrExistingInfo.UnderlyingTypeSize, EnumMaxValue);
-				NewOrExistingInfo.bWasEnumSizeInitialized = true;
-			}
+			/* Initialize / promote the size based on the highest value contained by this enum.
+			 * SetEnumSizeForValue uses std::max internally so it never shrinks an already-set size —
+			 * safe to call even when bWasInstanceFound is true (e.g. a uint8 property whose enum
+			 * carries a _MAX = 256 sentinel needs to be promoted to uint16). */
+			EnumInitHelper::SetEnumSizeForValue(NewOrExistingInfo.UnderlyingTypeSize, EnumMaxValue);
+			NewOrExistingInfo.bWasEnumSizeInitialized = true;
 		}
 	}
 }
@@ -217,6 +219,14 @@ void EnumManager::InitIllegalNames()
 	IllegalNames.push_back(UniqueEnumValueNames.FindOrAdd("EVENT_MAX").first);
 	IllegalNames.push_back(UniqueEnumValueNames.FindOrAdd("IGNORE").first);
 	IllegalNames.push_back(UniqueEnumValueNames.FindOrAdd("small").first);
+	/* Common preprocessor macros that would textually replace the enum value name */
+	IllegalNames.push_back(UniqueEnumValueNames.FindOrAdd("DEBUG").first);
+	IllegalNames.push_back(UniqueEnumValueNames.FindOrAdd("NDEBUG").first);
+	IllegalNames.push_back(UniqueEnumValueNames.FindOrAdd("NULL").first);
+	IllegalNames.push_back(UniqueEnumValueNames.FindOrAdd("NAN").first);
+	IllegalNames.push_back(UniqueEnumValueNames.FindOrAdd("INFINITY").first);
+	IllegalNames.push_back(UniqueEnumValueNames.FindOrAdd("min").first);
+	IllegalNames.push_back(UniqueEnumValueNames.FindOrAdd("max").first);
 
 	IllegalNames.push_back(UniqueEnumValueNames.FindOrAdd("short").first);
 	IllegalNames.push_back(UniqueEnumValueNames.FindOrAdd("long").first);

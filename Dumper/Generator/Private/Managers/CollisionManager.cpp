@@ -1,5 +1,7 @@
+#include <format>
 #include "Managers/CollisionManager.h"
 
+#include "Menu/Logger.h"
 NameInfo::NameInfo(HashStringTableIndex NameIdx, ECollisionType CurrentType)
 	: Name(NameIdx), CollisionData(0x0)
 {
@@ -239,7 +241,7 @@ void CollisionManager::AddStructToNameContainer(UEStruct Struct, bool bIsStruct)
 		const auto [It, bInserted] = TranslationMap.emplace(KeyFunctions::GetKeyForCollisionInfo(Struct, Member), Index);
 		
 		if (!bInserted)
-			std::cerr << "Error, no insertion took place, key {0x" << std::hex << KeyFunctions::GetKeyForCollisionInfo(Struct, Member) << "} duplicated!" << std::endl;
+			LogError("%s", std::format("Error, no insertion took place, key {{0x{:X}}} duplicated!", KeyFunctions::GetKeyForCollisionInfo(Struct, Member)).c_str());
 	};
 
 	for (UEProperty Prop : Struct.GetProperties())
@@ -260,7 +262,7 @@ std::string CollisionManager::StringifyName(UEStruct Struct, NameInfo Info)
 
 	std::string Name = MemberNames.GetStringEntry(Info.Name).GetName();
 
-	//std::cerr << "Nm: " << Name << "\nInfo:" << Info.DebugStringify() << "\n";
+	//LogError("%s", std::format("Nm: {}\nInfo:{}\n", Name, Info.DebugStringify()).c_str());
 
 	// Order of sub-if-statements matters
 	if (OwnCollisionType == ECollisionType::MemberName)

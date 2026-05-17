@@ -1,11 +1,13 @@
 #pragma once
 
+#include <format>
 #include <vector>
 
 #include "Unreal/ObjectArray.h"
 
 #include "Platform.h"
 
+#include "Menu/Logger.h"
 namespace OffsetFinder
 {
 	constexpr int32 OffsetNotFound = -1;
@@ -21,7 +23,7 @@ namespace OffsetFinder
 		{
 			if (ObjectValuePair[i].first == nullptr)
 			{
-				std::cerr << "Dumper-7 ERROR: FindOffset is skipping ObjectValuePair[" << i << "] because .first is nullptr." << std::endl;
+				LogError("%s", std::format("Dumper-7 ERROR: FindOffset is skipping ObjectValuePair[{}] because .first is nullptr.", i).c_str());
 				continue;
 			}
 

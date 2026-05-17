@@ -5,6 +5,7 @@
 #include "Unreal/ObjectArray.h"
 #include "Managers/StructManager.h"
 
+#include "Menu/Logger.h"
 StructInfoHandle::StructInfoHandle(const StructInfo& InInfo)
 	: Info(&InInfo)
 {
@@ -221,7 +222,7 @@ void StructManager::InitSizesAndIsFinal()
 
 			if (It == StructInfoOverrides.end())
 			{
-				std::cerr << "\n\n\nDumper-7: Error, struct wasn't found in 'StructInfoOverrides'! Exiting...\n\n\n" << std::endl;
+				LogError("\n\n\nDumper-7: Error, struct wasn't found in 'StructInfoOverrides'! Exiting...\n\n\n");
 				std::this_thread::sleep_for(std::chrono::seconds(10));
 				exit(1);
 			}

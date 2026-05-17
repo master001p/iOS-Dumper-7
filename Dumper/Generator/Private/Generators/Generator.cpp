@@ -38,13 +38,13 @@ void Generator::InitEngineCore()
 	//InitObjectArrayDecryption([](void* ObjPtr) -> uint8* { return reinterpret_cast<uint8*>(uint64(ObjPtr) ^ 0x1B5DEAFD6B4068C); });
 
 	ObjectArray::Init();
-//    FName::Init((int32)0x0CB41B80, FName::EOffsetOverrideType::GNames, true, "UAGame"); // ArenaBreakout
+    FName::Init((int32)0x0d59d400, FName::EOffsetOverrideType::GNames, true, "UAGame"); // ArenaBreakout
 //    FName::Init((int32)0x05E4AD40, FName::EOffsetOverrideType::GNames, true, "ShooterGame"); // ARK Revamp
-	FName::Init((int32)0x420fc48, FName::EOffsetOverrideType::GNames, false /* Not FNamePool */, "ShooterGame"); // ARK 2.0
+//	FName::Init((int32)0x420fc48, FName::EOffsetOverrideType::GNames, false /* Not FNamePool */, "ShooterGame"); // ARK 2.0
 //    FName::Init();
 	Off::Init();
 	PropertySizes::Init();
-	Off::InSDK::ProcessEvent::InitPE(70); //Must be at this position, relies on offsets initialized in Off::Init()
+	Off::InSDK::ProcessEvent::InitPE(71); //Must be at this position, relies on offsets initialized in Off::Init()
 
 	Off::InSDK::World::InitGWorld(); //Must be at this position, relies on offsets initialized in Off::Init()
 

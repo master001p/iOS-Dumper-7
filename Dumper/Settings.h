@@ -16,7 +16,7 @@
  *   - the emitted SDK's `using TCHAR = ...;` alias,
  *   - the emitted STATIC_NAME_IMPL literal prefix (L"..." vs u"...").
  */
-#define UEVERSION 417
+#define UEVERSION 426
 
 #if UEVERSION >= 421
 

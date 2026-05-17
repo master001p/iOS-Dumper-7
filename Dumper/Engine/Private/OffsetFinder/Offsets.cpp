@@ -14,6 +14,7 @@
 #include "Architecture.h"
 
 
+#include "Menu/Logger.h"
 void Off::InSDK::ProcessEvent::InitPE()
 {
 #ifdef PLATFORM_WINDOWS
@@ -65,12 +66,12 @@ void Off::InSDK::ProcessEvent::InitPE()
 		Off::InSDK::ProcessEvent::PEIndex = ProcessEventIdx;
 		Off::InSDK::ProcessEvent::PEOffset = Platform::GetOffset(ProcessEventAddr);
 
-		std::cerr << std::format("PE-Offset: 0x{:X}\n", Off::InSDK::ProcessEvent::PEOffset);
-		std::cerr << std::format("PE-Index: 0x{:X}\n\n", ProcessEventIdx);
+		LogError("%s", std::format("PE-Offset: 0x{:X}\n", Off::InSDK::ProcessEvent::PEOffset).c_str());
+		LogError("%s", std::format("PE-Index: 0x{:X}\n\n", ProcessEventIdx).c_str());
 		return;
 	}
 
-	std::cerr << "\nCouldn't find ProcessEvent!\n\n" << std::endl;
+	LogError("\nCouldn't find ProcessEvent!\n\n");
 
 #endif // PLATFORM_WINDOWS
 }
@@ -83,7 +84,7 @@ void Off::InSDK::ProcessEvent::InitPE(const int32 Index, const char* const Modul
 
 	Off::InSDK::ProcessEvent::PEOffset = Platform::GetOffset(VFT[Off::InSDK::ProcessEvent::PEIndex], ModuleName);
 
-	std::cerr << std::format("PE-Offset: 0x{:X}\n", Off::InSDK::ProcessEvent::PEOffset);
+	LogError("%s", std::format("PE-Offset: 0x{:X}\n", Off::InSDK::ProcessEvent::PEOffset).c_str());
 }
 
 /* UWorld */
@@ -124,12 +125,12 @@ void Off::InSDK::World::InitGWorld()
 				else
 				{
 					Result = Results[1];
-					std::cerr << std::format("Filter GActiveLogWorld at 0x{:X}\n\n", reinterpret_cast<uintptr_t>(PossibleGWorld));
+					LogError("%s", std::format("Filter GActiveLogWorld at 0x{:X}\n\n", reinterpret_cast<uintptr_t>(PossibleGWorld)).c_str());
 				}
 			}
 			else
 			{
-				std::cerr << std::format("Detected {} GWorld \n\n", Results.size());
+				LogError("%s", std::format("Detected {} GWorld \n\n", Results.size()).c_str());
 			}
 		}
 
@@ -137,13 +138,13 @@ void Off::InSDK::World::InitGWorld()
 		if (Result)
 		{
 			Off::InSDK::World::GWorld = Platform::GetOffset(Result);
-			std::cerr << std::format("GWorld-Offset: 0x{:X}\n\n", Off::InSDK::World::GWorld);
+			LogError("%s", std::format("GWorld-Offset: 0x{:X}\n\n", Off::InSDK::World::GWorld).c_str());
 			break;
 		}
 	}
 
 	if (Off::InSDK::World::GWorld == 0x0)
-		std::cerr << std::format("\nGWorld WAS NOT FOUND!!!!!!!!!\n\n");
+		LogError("%s", std::format("\nGWorld WAS NOT FOUND!!!!!!!!!\n\n").c_str());
 }
 
 /* FText */
@@ -151,7 +152,7 @@ void Off::InSDK::Text::InitTextOffsets()
 {
 	if (!Off::InSDK::ProcessEvent::PEIndex)
 	{
-		std::cerr << std::format("\nDumper-7: Error, 'InitInSDKTextOffsets' was called before ProcessEvent was initialized!\n") << std::endl;
+		LogError("%s", std::format("\nDumper-7: Error, 'InitInSDKTextOffsets' was called before ProcessEvent was initialized!\n").c_str());
 		return;
 	}
 
@@ -168,7 +169,7 @@ void Off::InSDK::Text::InitTextOffsets()
 
 	if (!Conv_StringToText)
 	{
-		std::cerr << "Conv_StringToText is invalid!\n";
+		LogError("Conv_StringToText is invalid!\n");
 		return;
 	}
 
@@ -227,7 +228,7 @@ void Off::InSDK::Text::InitTextOffsets()
 
 	if (!FTextDataPtr)
 	{
-		std::cerr << std::format("\nDumper-7: Error, 'FTextDataPtr' could not be found!\n") << std::endl;
+		LogError("%s", std::format("\nDumper-7: Error, 'FTextDataPtr' could not be found!\n").c_str());
 		return;
 	}
 
@@ -247,9 +248,9 @@ void Off::InSDK::Text::InitTextOffsets()
 		}
 	}
 
-	std::cerr << std::format("Off::InSDK::Text::TextSize: 0x{:X}\n", Off::InSDK::Text::TextSize);
-	std::cerr << std::format("Off::InSDK::Text::TextDatOffset: 0x{:X}\n", Off::InSDK::Text::TextDatOffset);
-	std::cerr << std::format("Off::InSDK::Text::InTextDataStringOffset: 0x{:X}\n\n", Off::InSDK::Text::InTextDataStringOffset);
+	LogError("%s", std::format("Off::InSDK::Text::TextSize: 0x{:X}\n", Off::InSDK::Text::TextSize).c_str());
+	LogError("%s", std::format("Off::InSDK::Text::TextDatOffset: 0x{:X}\n", Off::InSDK::Text::TextDatOffset).c_str());
+	LogError("%s", std::format("Off::InSDK::Text::InTextDataStringOffset: 0x{:X}\n\n", Off::InSDK::Text::InTextDataStringOffset).c_str());
 }
 
 void Off::Init()
@@ -258,29 +259,29 @@ void Off::Init()
 	{
 		if (Offset == OffsetFinder::OffsetNotFound)
 		{
-			std::cerr << std::format("Defaulting to offset: 0x{:X}\n", DefaultValue);
+			LogError("%s", std::format("Defaulting to offset: 0x{:X}\n", DefaultValue).c_str());
 			Offset = DefaultValue;
 		}
 	};
 
 	Off::UObject::Flags = OffsetFinder::FindUObjectFlagsOffset();
 	OverwriteIfInvalidOffset(Off::UObject::Flags, sizeof(void*)); // Default to right after VTable
-	std::cerr << std::format("Off::UObject::Flags: 0x{:X}\n", Off::UObject::Flags);
+	LogError("%s", std::format("Off::UObject::Flags: 0x{:X}\n", Off::UObject::Flags).c_str());
 
 	Off::UObject::Index = OffsetFinder::FindUObjectIndexOffset();
 	OverwriteIfInvalidOffset(Off::UObject::Index, (Off::UObject::Flags + sizeof(int32))); // Default to right after Flags
-	std::cerr << std::format("Off::UObject::Index: 0x{:X}\n", Off::UObject::Index);
+	LogError("%s", std::format("Off::UObject::Index: 0x{:X}\n", Off::UObject::Index).c_str());
 
 	Off::UObject::Class = OffsetFinder::FindUObjectClassOffset();
 	OverwriteIfInvalidOffset(Off::UObject::Class, (Off::UObject::Index + sizeof(int32))); // Default to right after Index
-	std::cerr << std::format("Off::UObject::Class: 0x{:X}\n", Off::UObject::Class);
+	LogError("%s", std::format("Off::UObject::Class: 0x{:X}\n", Off::UObject::Class).c_str());
 
 	Off::UObject::Outer = OffsetFinder::FindUObjectOuterOffset();
-	std::cerr << std::format("Off::UObject::Outer: 0x{:X}\n", Off::UObject::Outer);
+	LogError("%s", std::format("Off::UObject::Outer: 0x{:X}\n", Off::UObject::Outer).c_str());
 
 	Off::UObject::Name = OffsetFinder::FindUObjectNameOffset();
 	OverwriteIfInvalidOffset(Off::UObject::Name, (Off::UObject::Class + sizeof(void*))); // Default to right after Class
-	std::cerr << std::format("Off::UObject::Name: 0x{:X}\n\n", Off::UObject::Name);
+	LogError("%s", std::format("Off::UObject::Name: 0x{:X}\n\n", Off::UObject::Name).c_str());
 
 	OverwriteIfInvalidOffset(Off::UObject::Outer, (Off::UObject::Name + sizeof(int32) + sizeof(int32)));  // Default to right after Name
 
@@ -290,42 +291,42 @@ void Off::Init()
 
 	// Castflags needs to stay here since the FindChildOffset() uses CastFlags
 	Off::UClass::CastFlags = OffsetFinder::FindCastFlagsOffset();
-	std::cerr << std::format("Off::UClass::CastFlags: 0x{:X}\n", Off::UClass::CastFlags);
+	LogError("%s", std::format("Off::UClass::CastFlags: 0x{:X}\n", Off::UClass::CastFlags).c_str());
 
 	Off::UStruct::Children = OffsetFinder::FindChildOffset();
-	std::cerr << std::format("Off::UStruct::Children: 0x{:X}\n", Off::UStruct::Children);
+	LogError("%s", std::format("Off::UStruct::Children: 0x{:X}\n", Off::UStruct::Children).c_str());
 
 	Off::UField::Next = OffsetFinder::FindUFieldNextOffset();
-	std::cerr << std::format("Off::UField::Next: 0x{:X}\n", Off::UField::Next);
+	LogError("%s", std::format("Off::UField::Next: 0x{:X}\n", Off::UField::Next).c_str());
 
 	Off::UStruct::SuperStruct = OffsetFinder::FindSuperOffset();
-	std::cerr << std::format("Off::UStruct::SuperStruct: 0x{:X}\n", Off::UStruct::SuperStruct);
+	LogError("%s", std::format("Off::UStruct::SuperStruct: 0x{:X}\n", Off::UStruct::SuperStruct).c_str());
 
 	Off::UStruct::Size = OffsetFinder::FindStructSizeOffset();
-	std::cerr << std::format("Off::UStruct::Size: 0x{:X}\n", Off::UStruct::Size);
+	LogError("%s", std::format("Off::UStruct::Size: 0x{:X}\n", Off::UStruct::Size).c_str());
 
 	Off::UStruct::MinAlignment = OffsetFinder::FindMinAlignmentOffset();
-	std::cerr << std::format("Off::UStruct::MinAlignment: 0x{:X}\n", Off::UStruct::MinAlignment);
+	LogError("%s", std::format("Off::UStruct::MinAlignment: 0x{:X}\n", Off::UStruct::MinAlignment).c_str());
 
 	Off::UClass::CastFlags = OffsetFinder::FindCastFlagsOffset();
-	std::cerr << std::format("Off::UClass::CastFlags: 0x{:X}\n", Off::UClass::CastFlags);
+	LogError("%s", std::format("Off::UClass::CastFlags: 0x{:X}\n", Off::UClass::CastFlags).c_str());
 
 	// Castflags become available for use
 
 	if (Settings::Internal::bUseFProperty)
 	{
-		std::cerr << std::format("\nGame uses FProperty system\n\n");
+		LogError("%s", std::format("\nGame uses FProperty system\n\n").c_str());
 
 		Off::UStruct::ChildProperties = OffsetFinder::FindChildPropertiesOffset();
-		std::cerr << std::format("Off::UStruct::ChildProperties: 0x{:X}\n", Off::UStruct::ChildProperties);
+		LogError("%s", std::format("Off::UStruct::ChildProperties: 0x{:X}\n", Off::UStruct::ChildProperties).c_str());
 
 		OffsetFinder::FixupHardcodedOffsets(); // must be called after FindChildPropertiesOffset 
 
 		Off::FField::Next = OffsetFinder::FindFFieldNextOffset();
-		std::cerr << std::format("Off::FField::Next: 0x{:X}\n", Off::FField::Next);
+		LogError("%s", std::format("Off::FField::Next: 0x{:X}\n", Off::FField::Next).c_str());
 
 		Off::FField::Class = OffsetFinder::FindFFieldClassOffset();
-		std::cerr << std::format("Off::FField::Class: 0x{:X}\n", Off::FField::Class);
+		LogError("%s", std::format("Off::FField::Class: 0x{:X}\n", Off::FField::Class).c_str());
 
 		// Comment out this line if you're crashing here and see if the NewFindFFieldNameOffset might work!
 		Off::FField::Name = OffsetFinder::FindFFieldNameOffset();
@@ -334,59 +335,59 @@ void Off::Init()
 		if (Off::FField::Name == OffsetFinder::OffsetNotFound)
 			Off::FField::Name = OffsetFinder::NewFindFFieldNameOffset();
 
-		std::cerr << std::format("Off::FField::Name: 0x{:X}\n", Off::FField::Name);
+		LogError("%s", std::format("Off::FField::Name: 0x{:X}\n", Off::FField::Name).c_str());
 
 		/*
 		* FNameSize might be wrong at this point of execution.
 		* FField::Flags is not critical so a fix is only applied later in OffsetFinder::PostInitFNameSettings().
 		*/
 		Off::FField::Flags = Off::FField::Name + Off::InSDK::Name::FNameSize;
-		std::cerr << std::format("Off::FField::Flags: 0x{:X}\n", Off::FField::Flags);
+		LogError("%s", std::format("Off::FField::Flags: 0x{:X}\n", Off::FField::Flags).c_str());
 
 		Off::FField::EditorOnlyMetadata = OffsetFinder::FindFFieldEditorOnlyMetaDataOffset();
 		if (Off::FField::EditorOnlyMetadata != OffsetFinder::OffsetNotFound)
-			std::cerr << std::format("Off::FField::EditorOnlyMetadata: 0x{:X}\n", Off::FField::EditorOnlyMetadata);
+			LogError("%s", std::format("Off::FField::EditorOnlyMetadata: 0x{:X}\n", Off::FField::EditorOnlyMetadata).c_str());
 
 		Off::FFieldClass::CastFlags = OffsetFinder::FindFieldClassCastFlagsOffset();
-		std::cerr << std::format("Off::FFieldClass::CastFlags: 0x{:X}\n\n", Off::FFieldClass::CastFlags);
+		LogError("%s", std::format("Off::FFieldClass::CastFlags: 0x{:X}\n\n", Off::FFieldClass::CastFlags).c_str());
 	}
 
 	Off::UStruct::StructBaseChain = OffsetFinder::FindStructBaseChainOffset();
 	if (Off::UStruct::StructBaseChain != OffsetFinder::OffsetNotFound)
-		std::cerr << std::format("Off::UStruct::StructBaseChain: 0x{:X}\n", Off::UStruct::StructBaseChain);
+		LogError("%s", std::format("Off::UStruct::StructBaseChain: 0x{:X}\n", Off::UStruct::StructBaseChain).c_str());
 
 	Off::UClass::ClassDefaultObject = OffsetFinder::FindDefaultObjectOffset();
-	std::cerr << std::format("Off::UClass::ClassDefaultObject: 0x{:X}\n", Off::UClass::ClassDefaultObject);
+	LogError("%s", std::format("Off::UClass::ClassDefaultObject: 0x{:X}\n", Off::UClass::ClassDefaultObject).c_str());
 
 	Off::UClass::ImplementedInterfaces = OffsetFinder::FindImplementedInterfacesOffset();
-	std::cerr << std::format("Off::UClass::ImplementedInterfaces: 0x{:X}\n", Off::UClass::ImplementedInterfaces);
+	LogError("%s", std::format("Off::UClass::ImplementedInterfaces: 0x{:X}\n", Off::UClass::ImplementedInterfaces).c_str());
 
 	Off::UEnum::Names = OffsetFinder::FindEnumNamesOffset();
-	std::cerr << std::format("Off::UEnum::Names: 0x{:X}\n", Off::UEnum::Names) << std::endl;
+	LogError("%s", std::format("Off::UEnum::Names: 0x{:X}\n", Off::UEnum::Names).c_str());
 
 	Off::UFunction::FunctionFlags = OffsetFinder::FindFunctionFlagsOffset();
-	std::cerr << std::format("Off::UFunction::FunctionFlags: 0x{:X}\n", Off::UFunction::FunctionFlags);
+	LogError("%s", std::format("Off::UFunction::FunctionFlags: 0x{:X}\n", Off::UFunction::FunctionFlags).c_str());
 
 	Off::UFunction::ExecFunction = OffsetFinder::FindFunctionNativeFuncOffset();
-	std::cerr << std::format("Off::UFunction::ExecFunction: 0x{:X}\n", Off::UFunction::ExecFunction) << std::endl;
+	LogError("%s", std::format("Off::UFunction::ExecFunction: 0x{:X}\n", Off::UFunction::ExecFunction).c_str());
 
 	Off::Property::ElementSize = OffsetFinder::FindElementSizeOffset();
-	std::cerr << std::format("Off::Property::ElementSize: 0x{:X}\n", Off::Property::ElementSize);
+	LogError("%s", std::format("Off::Property::ElementSize: 0x{:X}\n", Off::Property::ElementSize).c_str());
 
 	Off::Property::ArrayDim = OffsetFinder::FindArrayDimOffset();
-	std::cerr << std::format("Off::Property::ArrayDim: 0x{:X}\n", Off::Property::ArrayDim);
+	LogError("%s", std::format("Off::Property::ArrayDim: 0x{:X}\n", Off::Property::ArrayDim).c_str());
 
 	Off::Property::Offset_Internal = OffsetFinder::FindOffsetInternalOffset();
-	std::cerr << std::format("Off::Property::Offset_Internal: 0x{:X}\n", Off::Property::Offset_Internal);
+	LogError("%s", std::format("Off::Property::Offset_Internal: 0x{:X}\n", Off::Property::Offset_Internal).c_str());
 
 	Off::Property::PropertyFlags = OffsetFinder::FindPropertyFlagsOffset();
-	std::cerr << std::format("Off::Property::PropertyFlags: 0x{:X}\n", Off::Property::PropertyFlags);
+	LogError("%s", std::format("Off::Property::PropertyFlags: 0x{:X}\n", Off::Property::PropertyFlags).c_str());
 
 	Off::BoolProperty::Base = OffsetFinder::FindBoolPropertyBaseOffset();
-	std::cerr << std::format("UBoolProperty::Base: 0x{:X}\n", Off::BoolProperty::Base) << std::endl;
+	LogError("%s", std::format("UBoolProperty::Base: 0x{:X}\n", Off::BoolProperty::Base).c_str());
 
 	Off::EnumProperty::Base = OffsetFinder::FindEnumPropertyBaseOffset();
-	std::cerr << std::format("Off::EnumProperty::Base: 0x{:X}\n", Off::EnumProperty::Base) << std::endl;
+	LogError("%s", std::format("Off::EnumProperty::Base: 0x{:X}\n", Off::EnumProperty::Base).c_str());
 
 
 	if (Off::EnumProperty::Base == OffsetFinder::OffsetNotFound)
@@ -399,42 +400,42 @@ void Off::Init()
 		Off::InSDK::Properties::PropertySize = Off::EnumProperty::Base;
 	}
 
-	std::cerr << std::format("UPropertySize: 0x{:X}\n", Off::InSDK::Properties::PropertySize) << std::endl;
+	LogError("%s", std::format("UPropertySize: 0x{:X}\n", Off::InSDK::Properties::PropertySize).c_str());
 
 	Off::ObjectProperty::PropertyClass = OffsetFinder::FindObjectPropertyClassOffset();
-	std::cerr << std::format("Off::ObjectProperty::PropertyClass: 0x{:X}", Off::ObjectProperty::PropertyClass) << std::endl;
+	LogError("%s", std::format("Off::ObjectProperty::PropertyClass: 0x{:X}", Off::ObjectProperty::PropertyClass).c_str());
 	OverwriteIfInvalidOffset(Off::ObjectProperty::PropertyClass, Off::InSDK::Properties::PropertySize);
 
 	Off::ByteProperty::Enum = OffsetFinder::FindBytePropertyEnumOffset();
 	OverwriteIfInvalidOffset(Off::ByteProperty::Enum, Off::InSDK::Properties::PropertySize);
-	std::cerr << std::format("Off::ByteProperty::Enum: 0x{:X}", Off::ByteProperty::Enum) << std::endl;
+	LogError("%s", std::format("Off::ByteProperty::Enum: 0x{:X}", Off::ByteProperty::Enum).c_str());
 
 	Off::StructProperty::Struct = OffsetFinder::FindStructPropertyStructOffset();
 	OverwriteIfInvalidOffset(Off::StructProperty::Struct, Off::InSDK::Properties::PropertySize);
-	std::cerr << std::format("Off::StructProperty::Struct: 0x{:X}\n", Off::StructProperty::Struct) << std::endl;
+	LogError("%s", std::format("Off::StructProperty::Struct: 0x{:X}\n", Off::StructProperty::Struct).c_str());
 
 	Off::DelegateProperty::SignatureFunction = OffsetFinder::FindDelegatePropertySignatureFunctionOffset();
 	OverwriteIfInvalidOffset(Off::DelegateProperty::SignatureFunction, Off::InSDK::Properties::PropertySize);
-	std::cerr << std::format("Off::DelegateProperty::SignatureFunction: 0x{:X}\n", Off::DelegateProperty::SignatureFunction) << std::endl;
+	LogError("%s", std::format("Off::DelegateProperty::SignatureFunction: 0x{:X}\n", Off::DelegateProperty::SignatureFunction).c_str());
 
 	Off::ArrayProperty::Inner = OffsetFinder::FindInnerTypeOffset(Off::InSDK::Properties::PropertySize);
-	std::cerr << std::format("Off::ArrayProperty::Inner: 0x{:X}\n", Off::ArrayProperty::Inner);
+	LogError("%s", std::format("Off::ArrayProperty::Inner: 0x{:X}\n", Off::ArrayProperty::Inner).c_str());
 
 	Off::SetProperty::ElementProp = OffsetFinder::FindSetPropertyBaseOffset(Off::InSDK::Properties::PropertySize);
-	std::cerr << std::format("Off::SetProperty::ElementProp: 0x{:X}\n", Off::SetProperty::ElementProp);
+	LogError("%s", std::format("Off::SetProperty::ElementProp: 0x{:X}\n", Off::SetProperty::ElementProp).c_str());
 
 	Off::MapProperty::Base = OffsetFinder::FindMapPropertyBaseOffset(Off::InSDK::Properties::PropertySize);
-	std::cerr << std::format("Off::MapProperty::Base: 0x{:X}\n", Off::MapProperty::Base) << std::endl;
+	LogError("%s", std::format("Off::MapProperty::Base: 0x{:X}\n", Off::MapProperty::Base).c_str());
 
 	Off::InSDK::ULevel::Actors = OffsetFinder::FindLevelActorsOffset();
-	std::cerr << std::format("Off::InSDK::ULevel::Actors: 0x{:X}\n", Off::InSDK::ULevel::Actors) << std::endl;
+	LogError("%s", std::format("Off::InSDK::ULevel::Actors: 0x{:X}\n", Off::InSDK::ULevel::Actors).c_str());
 
 	Off::InSDK::UDataTable::RowMap = OffsetFinder::FindDatatableRowMapOffset();
-	std::cerr << std::format("Off::InSDK::UDataTable::RowMap: 0x{:X}\n", Off::InSDK::UDataTable::RowMap) << std::endl;
+	LogError("%s", std::format("Off::InSDK::UDataTable::RowMap: 0x{:X}\n", Off::InSDK::UDataTable::RowMap).c_str());
 
 	OffsetFinder::PostInitFNameSettings();
 
-	std::cerr << std::endl;
+	LogError("");
 
 	Off::FieldPathProperty::FieldClass = Off::InSDK::Properties::PropertySize;
 	Off::OptionalProperty::ValueProperty = Off::InSDK::Properties::PropertySize;

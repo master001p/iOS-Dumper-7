@@ -1,6 +1,8 @@
+#include <format>
 #include "HashStringTable.h"
 
 
+#include "Menu/Logger.h"
 #pragma warning(suppress: 26495)
 HashStringTable::HashStringTable(uint32 InitialBucketSize)
 {
@@ -169,7 +171,7 @@ inline std::pair<HashStringTableIndex, bool> HashStringTable::FindOrAdd(const Ch
 
     if (!Str || Length <= 0 || Length > StringEntry::MaxStringLength)
     {
-        std::cerr << std::format("Error on line {{{:d}}}: {}\n", __LINE__, !Str ? "!Str" : Length <= 0 ? "Length <= 0" : "Length > MaxStringLength") << std::endl;
+        LogError("%s", std::format("Error on line {{{:d}}}: {}\n", __LINE__, !Str ? "!Str" : Length <= 0 ? "Length <= 0" : "Length > MaxStringLength").c_str());
         return { HashStringTableIndex(-1), false };
     }
 
@@ -227,15 +229,15 @@ void HashStringTable::DebugPrintStats() const
         TotalMemoryUsed += Bucket.Size;
         TotalMemoryAllocated += Bucket.SizeMax;
 
-        std::cerr << std::format("Bucket[{:02d}] = {{ Data = {:p}, Size = {:05X}, SizeMax = {:05X} }}\n", i, static_cast<void*>(Bucket.Data), Bucket.Size, Bucket.SizeMax);
+        LogError("%s", std::format("Bucket[{:02d}] = {{ Data = {:p}, Size = {:05X}, SizeMax = {:05X} }}\n", i, static_cast<void*>(Bucket.Data), Bucket.Size, Bucket.SizeMax).c_str());
     }
 
-    std::cerr << std::endl;
+    LogError("");
 
-    std::cerr << std::format("TotalMemoryUsed: {:X}\n", TotalMemoryUsed);
-    std::cerr << std::format("TotalMemoryAllocated: {:X}\n", TotalMemoryAllocated);
-    std::cerr << std::format("Percentage of allocation in use: {:.3f}\n", static_cast<double>(TotalMemoryUsed) / TotalMemoryAllocated);
+    LogError("%s", std::format("TotalMemoryUsed: {:X}\n", TotalMemoryUsed).c_str());
+    LogError("%s", std::format("TotalMemoryAllocated: {:X}\n", TotalMemoryAllocated).c_str());
+    LogError("%s", std::format("Percentage of allocation in use: {:.3f}\n", static_cast<double>(TotalMemoryUsed) / TotalMemoryAllocated).c_str());
 
-    std::cerr << "\n" << std::endl;
+    LogError("\n");
 }
 

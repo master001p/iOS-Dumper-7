@@ -1,4 +1,5 @@
 
+#include <format>
 #include <iostream>
 #include <string>
 
@@ -9,6 +10,7 @@
 #include "Settings.h"
 #include "Utils.h"
 
+#include "Menu/Logger.h"
 EMappingsTypeFlags MappingGenerator::GetMappingType(UEProperty Property)
 {
 	auto [Class, FieldClass] = Property.GetClass();
@@ -236,7 +238,7 @@ void MappingGenerator::GeneratePropertyInfo(const PropertyWrapper& Property, std
 {
 	if (!Property.IsUnrealProperty())
 	{
-		std::cerr << "\nInvalid non-Unreal property!\n" << std::endl;
+		LogError("\nInvalid non-Unreal property!\n");
 		return;
 	}
 
@@ -381,21 +383,21 @@ std::stringstream MappingGenerator::GenerateFileData()
 	WriteToStream(ReturnBuffer, NameData);
 
 	if constexpr (Settings::Debug::bShouldPrintMappingDebugData)
-		std::cerr << std::format("MappingGeneration: NameCounter = 0x{0:X} (Dec: {0})\n", static_cast<uint32>(NameCounter));
+		LogError("%s", std::format("MappingGeneration: NameCounter = 0x{0:X} (Dec: {0})\n", static_cast<uint32>(NameCounter)).c_str());
 
 	/* Write Enum-count and enums */
 	WriteToStream(ReturnBuffer, static_cast<uint32>(NumEnums));
 	WriteToStream(ReturnBuffer, EnumData);
 
 	if constexpr (Settings::Debug::bShouldPrintMappingDebugData)
-		std::cerr << std::format("MappingGeneration: NumEnums = 0x{0:X} (Dec: {0})\n", static_cast<uint32>(NumEnums));
+		LogError("%s", std::format("MappingGeneration: NumEnums = 0x{0:X} (Dec: {0})\n", static_cast<uint32>(NumEnums)).c_str());
 
 	/* Write Struct-count and enums */
 	WriteToStream(ReturnBuffer, static_cast<uint32>(NumStructsAndClasse));
 	WriteToStream(ReturnBuffer, StructData);
 
 	if constexpr (Settings::Debug::bShouldPrintMappingDebugData)
-		std::cerr << std::format("MappingGeneration: NumStructsAndClasse = 0x{0:X} (Dec: {0})\n\n", static_cast<uint32>(NumStructsAndClasse));
+		LogError("%s", std::format("MappingGeneration: NumStructsAndClasse = 0x{0:X} (Dec: {0})\n\n", static_cast<uint32>(NumStructsAndClasse)).c_str());
 
 	return ReturnBuffer;
 }
@@ -437,8 +439,8 @@ void MappingGenerator::GenerateFileHeader(StreamType& InUsmap, const std::string
 
 	if constexpr (Settings::Debug::bShouldPrintMappingDebugData)
 	{
-		std::cerr << std::format("MappingGeneration: CompressedSize = 0x{0:X} (Dec: {0})\n", CompressedSize);
-		std::cerr << std::format("MappingGeneration: DecompressedSize = 0x{0:X} (Dec: {0})\n\n", UncompressedSize);
+		LogError("%s", std::format("MappingGeneration: CompressedSize = 0x{0:X} (Dec: {0})\n", CompressedSize).c_str());
+		LogError("%s", std::format("MappingGeneration: DecompressedSize = 0x{0:X} (Dec: {0})\n\n", UncompressedSize).c_str());
 	}
 
 	/* Write compressed size */

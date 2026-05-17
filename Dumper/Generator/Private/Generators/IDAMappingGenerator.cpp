@@ -1,10 +1,12 @@
 
+#include <format>
 #include <fstream>
 
 #include "Generators/IDAMappingGenerator.h"
 #include "Platform.h"
 
 
+#include "Menu/Logger.h"
 std::string IDAMappingGenerator::MangleFunctionName(const std::string& ClassName, const std::string& FunctionName)
 {
 	return "_ZN" + std::to_string(ClassName.length()) + ClassName + std::to_string(FunctionName.length() + 4) + "exec" + FunctionName + "Ev";
@@ -75,7 +77,7 @@ void IDAMappingGenerator::GenerateClassFunctions(StreamType& IdmapFile, UEClass 
 
 		if (!bInseted)
 		{
-			//std::cerr << "Collision: \nOld: " << It->second << "\nNew: " << Func.GetFullName() << "\n" << std::endl;
+			//LogError("%s", std::format("Collision: \nOld: {}\nNew: {}\n", It->second, Func.GetFullName()).c_str());
 			continue;
 		}
 

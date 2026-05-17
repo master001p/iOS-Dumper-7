@@ -519,14 +519,29 @@ UEType ObjectArray::FindObjectFast(const std::string& Name, EClassCastFlags Requ
 {
 	auto ObjArray = ObjectArray();
 
+	const int32 Total = ObjectArray::Num();
+	int32 i = 0;
+
 	for (UEObject Object : ObjArray)
 	{
+		// Progress heartbeat so a slow / stuck scan is visible in the console
+		if ((i & 0xFFFF) == 0 && i > 0)
+			LogInfo("FindObjectFast(\"%s\"): scanned %d / %d", Name.c_str(), i, Total);
+		i++;
+
+		// Skip objects whose UObject* pointer or class read would fault
+		const void* Addr = Object.GetAddress();
+		if (!Addr || IsBadReadPtr(Addr))
+			continue;
+
 		if (Object.IsA(RequiredType) && Object.GetName() == Name)
 		{
+			LogSuccess("FindObjectFast(\"%s\"): found at index %d", Name.c_str(), i - 1);
 			return Object.Cast<UEType>();
 		}
 	}
 
+	LogError("FindObjectFast(\"%s\"): not found after scanning %d objects", Name.c_str(), Total);
 	return UEType();
 }
 

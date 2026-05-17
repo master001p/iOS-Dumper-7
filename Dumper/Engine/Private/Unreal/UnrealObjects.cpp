@@ -7,6 +7,7 @@
 #include "OffsetFinder/Offsets.h"
 
 
+#include "Menu/Logger.h"
 void* UEFFieldClass::GetAddress()
 {
 	return Class;
@@ -508,7 +509,7 @@ std::vector<std::pair<FName, int64>> UEEnum::GetNameValuePairs() const
 		if (!bIsNamesPtrTagged)
 		{
 			/* StaticNamesUTF8 is not supported yet. See: https://github.com/EpicGames/UnrealEngine/blob/ue5-main/Engine/Source/Runtime/CoreUObject/Public/UObject/Class.h#L3408*/
-			std::cerr << "Dumper-7 [UEEnum::GetNameValuePairs()]: UEnum::Names pointer is tagged! This is not supported yet!" << std::endl;
+			LogError("Dumper-7 [UEEnum::GetNameValuePairs()]: UEnum::Names pointer is tagged! This is not supported yet!");
 			std::this_thread::sleep_for(std::chrono::seconds(100));
 			exit(1);
 		}
