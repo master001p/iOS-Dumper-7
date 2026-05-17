@@ -177,11 +177,7 @@ namespace UC
 		template<typename SetType>
 		class SetElement
 		{
-		private:
-			template<typename SetDataType>
-			friend class TSet;
-
-		private:
+		public:
 			SetType Value;
 			int32 HashNextId;
 			int32 HashIndex;
@@ -334,13 +330,8 @@ namespace UC
 		{
 			if (*this)
 			{
-#if UEVERSION >= 421
-                std::u16string Str(Data);
+                UnrealString Str(Data);
                 return std::string(Str.begin(), Str.end());
-#else
-                std::wstring Str(Data);
-                return std::string(Str.begin(), Str.end());
-#endif
 			}
 			return "";
 		}
@@ -476,7 +467,7 @@ namespace UC
 
 	public:
 		inline       SparseArrayElementType& operator[](int32 Index)       { VerifyIndex(Index); return *reinterpret_cast<SparseArrayElementType*>(&Data.GetUnsafe(Index).ElementData); }
-		inline const SparseArrayElementType& operator[](int32 Index) const { VerifyIndex(Index); return *reinterpret_cast<SparseArrayElementType*>(&Data.GetUnsafe(Index).ElementData); }
+		inline const SparseArrayElementType& operator[](int32 Index) const { VerifyIndex(Index); return *reinterpret_cast<const SparseArrayElementType*>(&Data.GetUnsafe(Index).ElementData); }
 
 		inline bool operator==(const TSparseArray<SparseArrayElementType>& Other) const { return Data == Other.Data; }
 		inline bool operator!=(const TSparseArray<SparseArrayElementType>& Other) const { return Data != Other.Data; }

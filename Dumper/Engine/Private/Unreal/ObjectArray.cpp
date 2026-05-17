@@ -229,7 +229,7 @@ void ObjectArray::Init(bool bScanAllMemory, const char* const ModuleName)
     if (!bScanAllMemory)
         LogInfo("\nDumper-7 by me, you & him\n\n\n");
 
-    const auto [ImageBase, ImageSize, Header] = GetImageBaseAndSize(ModuleName);
+    const auto [ImageBase, ImageSize, Header, Slide] = GetImageBaseAndSize(ModuleName);
 
     uintptr SearchBase = ImageBase;
     uintptr SearchRange = ImageSize;
@@ -432,6 +432,9 @@ void ObjectArray::DumpObjects(const fs::path& Path, bool bWithPathname)
 
 	for (auto Object : ObjectArray())
 	{
+        if (!Object.GetAddress())
+            continue;
+        
 		if (!bWithPathname)
 		{
 			DumpStream << std::format("[{:08X}] {{{}}} {}\n", Object.GetIndex(), Object.GetAddress(), Object.GetFullName());
@@ -458,6 +461,8 @@ void ObjectArray::DumpObjectsWithProperties(const fs::path& Path, bool bWithPath
 
 	for (auto Object : ObjectArray())
 	{
+        if (!Object.GetAddress())
+            continue;
 		if (!bWithPathname)
 		{
 			DumpStream << std::format("[{:08X}] {{{}}} {}\n", Object.GetIndex(), Object.GetAddress(), Object.GetFullName());
@@ -497,6 +502,9 @@ UEType ObjectArray::FindObject(const std::string& FullName, EClassCastFlags Requ
 {
 	for (UEObject Object : ObjectArray())
 	{
+        if (!Object.GetAddress())
+            continue;
+        
 		if (Object.IsA(RequiredType) && Object.GetFullName() == FullName)
 		{
 			return Object.Cast<UEType>();
@@ -593,7 +601,7 @@ ObjectArray::ObjectsIterator& ObjectArray::ObjectsIterator::operator++()
 	return *this;
 }
 
-bool ObjectArray::ObjectsIterator::operator!=(const ObjectsIterator& Other)
+bool ObjectArray::ObjectsIterator::operator!=(const ObjectsIterator& Other) const
 {
 	return CurrentIndex != Other.CurrentIndex;
 }
@@ -678,4 +686,45 @@ int32 ObjectArray::ObjectsIterator::GetIndex() const
 	ObjectArray::GetByIndex<UEMapProperty>(-1);
 	ObjectArray::GetByIndex<UESetProperty>(-1);
 	ObjectArray::GetByIndex<UEEnumProperty>(-1);
+}
+
+
+bool AllFieldIterator::operator!=(const AllFieldIterator& Other) const
+{
+    return CurrentObject != Other.CurrentObject || PropertyIndex != Other.PropertyIndex;
+}
+
+AllFieldIterator& AllFieldIterator::operator++()
+{
+    if (CurrenStructHasMoreMembers())
+    {
+        PropertyIndex++;
+        return *this;
+    }
+    IterateToNextStructWithMembers();
+    return *this;
+}
+
+UEProperty AllFieldIterator::operator*() const
+{
+    return Fields[PropertyIndex];
+}
+
+void AllFieldIterator::IterateToNextStruct()
+{
+    if (IsEndIterator()) return;
+    ++CurrentObject;
+    while (CurrentObject != ObjectEndIterator && !IsCurrentObjectStruct())
+        ++CurrentObject;
+}
+
+void AllFieldIterator::IterateToNextStructWithMembers()
+{
+    while (!CurrenStructHasMoreMembers())
+    {
+        IterateToNextStruct();
+        PropertyIndex = 0;
+        if (IsEndIterator()) return;
+        Fields = GetCurrentStruct().GetProperties();
+    }
 }

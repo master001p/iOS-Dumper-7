@@ -10,69 +10,20 @@
 #include "Menu/Logger.h"
 #include "Unreal/NameArray.h"
 
-inline void InitWeakObjectPtrSettings()
-{
-	UEStruct LoadAsset = ObjectArray::FindObjectFast<UEFunction>("LoadAsset", EClassCastFlags::Function);
-
-	if (!LoadAsset)
-	{
-		LogError("'LoadAsset' wasn't found, could not determine value for 'bIsWeakObjectPtrWithoutTag'!");
-		return;
-	}
-
-	UEProperty Asset = LoadAsset.FindMember("Asset", EClassCastFlags::SoftObjectProperty);
-	if (!Asset)
-	{
-		LogError("'Asset' wasn't found, could not determine value for 'bIsWeakObjectPtrWithoutTag'!");
-		return;
-	}
-
-	UEStruct SoftObjectPath = ObjectArray::FindObjectFast<UEStruct>("SoftObjectPath");
-
-	constexpr int32 SizeOfFFWeakObjectPtr = 0x08;
-	constexpr int32 OldUnrealAssetPtrSize = 0x10;
-	const int32 SizeOfSoftObjectPath = SoftObjectPath ? SoftObjectPath.GetStructSize() : OldUnrealAssetPtrSize;
-
-	Settings::Internal::bIsWeakObjectPtrWithoutTag = Asset.GetSize() <= (SizeOfSoftObjectPath + SizeOfFFWeakObjectPtr);
-
-    LogSuccess("\nDumper-7: bIsWeakObjectPtrWithoutTag = %d\n", Settings::Internal::bIsWeakObjectPtrWithoutTag);
-}
-
-inline void InitLargeWorldCoordinateSettings()
-{
-	UEStruct FVectorStruct = ObjectArray::FindObjectFast<UEStruct>("Vector", EClassCastFlags::Struct);
-
-	if (!FVectorStruct) [[unlikely]]
-	{
-		LogError("Something went horribly wrong, FVector wasn't even found!");
-		return;
-	}
-
-	UEProperty XProperty = FVectorStruct.FindMember("X");
-
-	if (!XProperty) [[unlikely]]
-	{
-		LogError("Something went horribly wrong, FVector::X wasn't even found!");
-		return;
-	}
-
-	/* Check the underlaying type of FVector::X. If it's double we're on UE5.0, or higher, and using large world coordinates. */
-	Settings::Internal::bUseLargeWorldCoordinates = XProperty.IsA(EClassCastFlags::DoubleProperty);
-
-    LogSuccess("\nDumper-7: bUseLargeWorldCoordinates = %d\n", Settings::Internal::bUseLargeWorldCoordinates);
-}
-
 inline void InitSettings()
 {
-	InitWeakObjectPtrSettings();
-	InitLargeWorldCoordinateSettings();
+	Settings::InitWeakObjectPtrSettings();
+	Settings::InitLargeWorldCoordinateSettings();
+
+	Settings::InitObjectPtrPropertySettings();
+	Settings::InitArrayDimSizeSettings();
 }
 
 
 void Generator::InitEngineCore()
 {
 	LogInfo("Initializing Engine Core...");
-	
+
 	/* manual override */
 	//ObjectArray::Init(/*GObjects*/, /*ChunkSize*/, /*bIsChunked*/);
 	//FName::Init(/*FName::AppendString*/);
@@ -88,8 +39,8 @@ void Generator::InitEngineCore()
 
 	ObjectArray::Init();
 //    FName::Init((int32)0x0CB41B80, FName::EOffsetOverrideType::GNames, true, "UAGame"); // ArenaBreakout
-    //    FName::Init((int32)0x05E4AD40, FName::EOffsetOverrideType::GNames, true, "ShooterGame"); // ARK Revamp
-    FName::Init((int32)0x420fc48, FName::EOffsetOverrideType::GNames, false /* Not FNamePool */, "ShooterGame"); // ARK 2.0
+//    FName::Init((int32)0x05E4AD40, FName::EOffsetOverrideType::GNames, true, "ShooterGame"); // ARK Revamp
+	FName::Init((int32)0x420fc48, FName::EOffsetOverrideType::GNames, false /* Not FNamePool */, "ShooterGame"); // ARK 2.0
 //    FName::Init();
 	Off::Init();
 	PropertySizes::Init();
@@ -106,22 +57,22 @@ void Generator::InitEngineCore()
 void Generator::InitInternal()
 {
 	LogInfo("Initializing Internal Generator...");
-	
+
 	// Initialize PackageManager with all packages, their names, structs, classes enums, functions and dependencies
 	PackageManager::Init();
 
 	// Initialize StructManager with all structs and their names
 	StructManager::Init();
-	
+
 	// Initialize EnumManager with all enums and their names
 	EnumManager::Init();
-	
+
 	// Initialized all Member-Name collisions
 	MemberManager::Init();
 
 	// Post-Initialize PackageManager after StructManager has been initialized. 'PostInit()' handles Cyclic-Dependencies detection
 	PackageManager::PostInit();
-	
+
 	LogSuccess("Internal Generator initialized successfully");
 }
 
@@ -172,7 +123,7 @@ bool Generator::SetupFolders(std::string& FolderName, fs::path& OutFolder, std::
 	{
 		OutFolder = DumperFolder / FolderName;
 		OutSubFolder = OutFolder / SubfolderName;
-				
+
 		if (fs::exists(OutFolder))
 		{
 			fs::path Old = OutFolder.generic_string() + "_OLD";
@@ -194,4 +145,11 @@ bool Generator::SetupFolders(std::string& FolderName, fs::path& OutFolder, std::
 	}
 
 	return true;
+}
+
+
+// iOS port: stub. Upstream emits a Metadata.json describing editor-only properties.
+// The iOS port doesn't yet expose Off::FField::EditorOnlyMetadata; skipping for KISS.
+void DumpEditorOnlyMetadata(const fs::path& /*DumperFolder*/)
+{
 }

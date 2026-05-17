@@ -42,71 +42,65 @@ void FNameEntry::Init(const uint8* FirstChunkPtr, int64 NameEntryStringOffset)
     LogInfo("Dumper-7: [FNameEntry] Initializing...");
     if (Settings::Internal::bUseNamePool)
     {
-        constexpr int64 NoneStrLen = 0x4;
-        constexpr uint16 BytePropertyStrLen = 0xC; // Length of "ByteProperty"
-        constexpr uint32 BytePropertyStartAsUint32 = 'etyB'; // "Byte"
 
         Off::FNameEntry::NamePool::StringOffset = (int32)NameEntryStringOffset;
         Off::FNameEntry::NamePool::HeaderOffset = (int32)NameEntryStringOffset == 6 ? 4 : 0;
- 
-        const uint8* AssumedBytePropertyEntry = *reinterpret_cast<uint8* const*>(FirstChunkPtr) + NameEntryStringOffset + NoneStrLen;
 
-        /* Check if there's pading after an FNameEntry. Check if there's up to 0x8 bytes padding. */
-        for (int i = 0; i < 0x8; i++)
-        {
-            if (IsBadReadPtr(AssumedBytePropertyEntry + NameEntryStringOffset)) break;
-            const uint32 FirstPartOfByteProperty = *reinterpret_cast<const uint32*>(AssumedBytePropertyEntry + NameEntryStringOffset);
-
-            if (FirstPartOfByteProperty == BytePropertyStartAsUint32)
-                break;
-
-            AssumedBytePropertyEntry += 0x1;
-        }
-
-        uint16 BytePropertyHeader = *reinterpret_cast<const uint16*>(AssumedBytePropertyEntry + Off::FNameEntry::NamePool::HeaderOffset);
-
-        /* Shifiting past the size of the header is not allowed, so limmit the shiftcount here */
-        constexpr int32 MaxAllowedShiftCount = sizeof(BytePropertyHeader) * 0x8;
-        LogInfo("Dumper-7: MaxAllowedShiftCount %d", MaxAllowedShiftCount);
-        LogInfo("Dumper-7: BytePropertyHeader %d", BytePropertyHeader);
-        while (BytePropertyHeader != BytePropertyStrLen && FNameEntryLengthShiftCount < MaxAllowedShiftCount)
-        {
-            FNameEntryLengthShiftCount++;
-            BytePropertyHeader >>= 1;
-        }
-
-        if (FNameEntryLengthShiftCount == MaxAllowedShiftCount)
-        {
-            LogError("\nDumper-7: Error, couldn't get FNameEntryLengthShiftCount!\n");
-            LogError("Dumper-7: FNameEntryLength %d | MaxAllowedShiftCount %d", FNameEntryLengthShiftCount, MaxAllowedShiftCount);
-            GetStr = [](uint8* NameEntry) -> UnrealString { return TEXT("Invalid FNameEntryLengthShiftCount!"); };
-            return;
-        }
-
-        LogSuccess("Dumper-7: [FNameEntry] NamePool initialized (Shift: %d, Stride: %d)", FNameEntryLengthShiftCount, Off::InSDK::NameArray::FNameEntryStride);
+        LogSuccess("Dumper-7: [FNameEntry] NamePool initialized (Shift: %d, Stride: %d)", 0, Off::InSDK::NameArray::FNameEntryStride);
 
         GetStr = [](uint8* NameEntry) -> UnrealString
         {
-            const uint16 HeaderWithoutNumber = *reinterpret_cast<uint16*>(NameEntry + Off::FNameEntry::NamePool::HeaderOffset);
-            const int32 NameLen = HeaderWithoutNumber >> FNameEntry::FNameEntryLengthShiftCount;
-
-            if (NameLen == 0)
+            uint16* Entry = reinterpret_cast<uint16*>(NameEntry);
+            if (int16 Len = *Entry >> 6)
             {
-                const int32 EntryIdOffset = Off::FNameEntry::NamePool::StringOffset + ((Off::FNameEntry::NamePool::StringOffset == 6) * 2);
+                if ((*Entry & 1) == 0)
+                {
+                    std::string Buffer(Len, '\0');
+                    memcpy(&Buffer[0], (char*)(Entry + 1), Len);
 
-                const int32 NextEntryIndex = *reinterpret_cast<int32*>(NameEntry + EntryIdOffset);
-                const int32 Number = *reinterpret_cast<int32*>(NameEntry + EntryIdOffset + sizeof(int32));
+                    uint32 Key = 0;
+            
+                    switch (Len % 9)
+                    {
+                    case 0u:
+                            Key = ((Len & 0x1F) + Len);
+                        break;
+                    case 1u:
+                            Key = ((Len ^ 0xDF) + Len);
+                        break;
+                    case 2u:
+                            Key = ((Len | 0xCF) + Len);
+                        break;
+                    case 3u:
+                            Key = (33 * Len);
+                        break;
+                    case 4u:
+                            Key = (Len + (Len >> 2));
+                        break;
+                    case 5u:
+                            Key = (3 * Len + 5);
+                        break;
+                    case 6u:
+                            Key = (((4 * Len) | 5) + Len);
+                        break;
+                    case 7u:
+                            Key = (((Len >> 4) | 7) + Len);
+                        break;
+                    case 8u:
+                            Key = ((Len ^ 0xC) + Len);
+                        break;
+                    default:
+                            Key = ((Len ^ 0x40) + Len);
+                        break;
+                    }
 
-                if (Number > 0)
-                    return NameArray::GetNameEntry(NextEntryIndex).GetWString() + TEXT('_') + ToUEString(Number - 1);
-
-                return NameArray::GetNameEntry(NextEntryIndex).GetWString();
+                    for (uint32 i = 0; i < Len; i++)
+                        Buffer[i] = (Key & 0x80) ^ ~Buffer[i];
+            
+                    return UtfN::StringToWString(Buffer);
+                }
             }
-
-            if (HeaderWithoutNumber & NameWideMask)
-                return UnrealString(reinterpret_cast<const TCHAR*>(NameEntry + Off::FNameEntry::NamePool::StringOffset), NameLen);
-
-            return UtfN::StringToWString(std::string(reinterpret_cast<const char*>(NameEntry + Off::FNameEntry::NamePool::StringOffset), NameLen));
+            return TEXT("None");
         };
     }
     else
@@ -221,9 +215,9 @@ bool NameArray::InitializeNamePool(uint8* NamePool)
     LogInfo("Initializing FNamePool...");
 
     // Default initialization
-    Off::NameArray::MaxChunkIndex = 0xC8;
-    Off::NameArray::ByteCursor = 0xCC;
-    Off::NameArray::ChunksStart = 0xD0;
+    Off::NameArray::MaxChunkIndex = 0xC0;
+    Off::NameArray::ByteCursor = 0xC4;
+    Off::NameArray::ChunksStart = 0xC8;
 
     bool bWasMaxChunkIndexFound = false;
     // Basic pointer check
@@ -232,71 +226,7 @@ bool NameArray::InitializeNamePool(uint8* NamePool)
         return false;
     }
 
-    // usually at iOS, MaxBlockOffsets (ChunkStart) is located at 0xD0
-    for (int i = 0x0; i < 0x200; i += 4)
-    {
-        if (IsBadReadPtr(NamePool + i)) break;
-
-        const int32 PossibleMaxChunkIdx = *reinterpret_cast<int32*>(NamePool + i);
-
-        // Sanity checks: Max chunks is 8192 (0x2000)
-        if (PossibleMaxChunkIdx < 0 || PossibleMaxChunkIdx > 0x2000)
-            continue;
-
-        int32 NotNullptrCount = 0x0;
-        bool bFoundFirstPtr = false;
-        
-        /* Number of invalid pointers we can encounter before we assume that there are no valid pointers anymore. */
-        constexpr int32 MaxAllowedNumInvalidPtrs = 0x500;
-        int32 NumPtrsSinceLastValid = 0x0;
-
-        for (int j = 0x0; j < 0x10000; j += 8)
-        {
-            const int32 ChunkOffset = i + 8 + j + (i % 8);
-            
-            if (IsBadReadPtr(NamePool + ChunkOffset)) break;
-
-            uint8* ChunkPtr = *reinterpret_cast<uint8**>(NamePool + ChunkOffset);
-
-            if (ChunkPtr != nullptr)
-            {
-                NotNullptrCount++;
-                NumPtrsSinceLastValid = 0;
-
-                if (!bFoundFirstPtr)
-                {
-                    bFoundFirstPtr = true;
-                    Off::NameArray::ChunksStart = ChunkOffset;
-                }
-            }
-            else
-            {
-                NumPtrsSinceLastValid++;
-                if (NumPtrsSinceLastValid == MaxAllowedNumInvalidPtrs)
-                    break;
-            }
-        }
-
-        if (PossibleMaxChunkIdx == (NotNullptrCount - 1))
-        {
-            Off::NameArray::MaxChunkIndex = i;
-            Off::NameArray::ByteCursor = i + 4;
-            bWasMaxChunkIndexFound = true;
-            LogInfo("[NameArray] Found MaxChunkIndex at 0x%X (Count: %d)", i, NotNullptrCount);
-            break;
-        }
-    }
-
-    if (!bWasMaxChunkIndexFound) {
-        LogError("MaxChunkIndex not found in NamePool");
-        return false;
-    }
-    
-    constexpr uint32 NoneAsUint32 = 0x656E6F4E; // "None"
-    constexpr uint64 CoreUObjAsUint64 = 0x6A624F5565726F43; // "jbOUeroC"
-    
     uint8_t** ChunkPtr = reinterpret_cast<uint8_t**>(NamePool + Off::NameArray::ChunksStart);
-    
     if (IsBadReadPtr(ChunkPtr)) {
         LogError("Invalid ChunkPtr in NamePool");
         return false;
@@ -307,52 +237,31 @@ bool NameArray::InitializeNamePool(uint8* NamePool)
         LogError("Invalid FirstChunk (is bad read). Decryption or Offset failed.");
         return false;
     }
-    
-    // "/Script/CoreUObject"
-    bool bFoundCoreUObjectString = false;
-    int64 FNameEntryHeaderSize = 0x0;
 
-    constexpr int32 LoopLimit = 0x1000;
-    for (int i = 0; i < LoopLimit; i++)
-    {
-        if (IsBadReadPtr(FirstChunk + i + 8)) continue;
-
-        if (*reinterpret_cast<uint32*>(FirstChunk + i) == NoneAsUint32 && FNameEntryHeaderSize == 0)
-        {
-            FNameEntryHeaderSize = i;
-        }
-        else if (*reinterpret_cast<uint64*>(FirstChunk + i) == CoreUObjAsUint64)
-        {
-            bFoundCoreUObjectString = true;
-            break;
-        }
-    }
-
-    if (!bFoundCoreUObjectString) {
-        LogError("CoreUObject string not found");
-        return false;
-    }
-
+    int FNameEntryHeaderSize = 2;
     LogInfo("Found CoreUObject, HeaderSize: %lld", FNameEntryHeaderSize);
     NameEntryStride = FNameEntryHeaderSize == 2 ? 2 : 4;
     Off::InSDK::NameArray::FNameEntryStride = (int32)NameEntryStride;
 
     ByIndex = [](void* NamesArray, int32 ComparisonIndex, int32 NamePoolBlockOffsetBits) -> void*
     {
-        const int32 ChunkIdx = ComparisonIndex >> NamePoolBlockOffsetBits;
-        const int32 InChunkOffset = (ComparisonIndex & ((1 << NamePoolBlockOffsetBits) - 1)) * (int32)NameEntryStride;
+        uintptr_t BlockBit = NamePoolBlockOffsetBits;
+        uintptr_t BlocksOffset = Off::NameArray::ChunksStart;
+        uintptr_t ChunkMask = (1 << BlockBit) - 1;
+        uintptr_t Stride = (uintptr_t)NameEntryStride;
 
-        if (ChunkIdx < 0 || ChunkIdx > NameArray::GetNumChunks()) return nullptr;
+        uintptr_t BlockOffset = ((ComparisonIndex >> BlockBit) * sizeof(void*));
+        uintptr_t ChunkOffset = ((ComparisonIndex & ChunkMask) * Stride);
 
-        uint8* PoolBase = reinterpret_cast<uint8*>(NamesArray);
-        uint8** BlocksArray = reinterpret_cast<uint8**>(PoolBase + Off::NameArray::ChunksStart);
+        uintptr_t PoolBase = reinterpret_cast<uintptr_t>(NamesArray);
+        
+        uint8_t** ChunkPtrLocation = reinterpret_cast<uint8_t**>(PoolBase + BlocksOffset + BlockOffset);
+        if (IsBadReadPtr(ChunkPtrLocation)) return nullptr;
 
-        if (IsBadReadPtr(BlocksArray + ChunkIdx)) return nullptr;
+        uint8_t* Chunk = *ChunkPtrLocation;
+        if (!Chunk || IsBadReadPtr(Chunk)) return nullptr;
 
-        uint8* TargetChunk = BlocksArray[ChunkIdx];
-        if (IsBadReadPtr(TargetChunk)) return nullptr;
-
-        return TargetChunk + InChunkOffset;
+        return (Chunk + ChunkOffset);
     };
 
     Settings::Internal::bUseNamePool = true;
@@ -682,8 +591,9 @@ void NameArray::PostInit()
 
         // Start with the standard UE4/UE5 value (14 bits)
         // 0x10 (16) is standard for many versions, but some games use 0xD like Fortnite (13)
-        NameArray::FNameBlockOffsetBits = 0x10;
-
+        // User snippet implies 18 bits (0x3FFFF mask)
+        NameArray::FNameBlockOffsetBits = 18;
+#if 0
         // Get the total number of chunks currently allocated in the name pool
         const int32 TotalChunks = NameArray::GetNumChunks();
 
@@ -728,7 +638,7 @@ void NameArray::PostInit()
 
             i--;
         }
-
+#endif
         Off::InSDK::NameArray::FNamePoolBlockOffsetBits = NameArray::FNameBlockOffsetBits;
          LogInfo("NameArray::FNameBlockOffsetBits: 0x%X", NameArray::FNameBlockOffsetBits);
     }
