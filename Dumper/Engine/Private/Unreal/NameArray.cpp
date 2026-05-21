@@ -226,7 +226,7 @@ bool NameArray::InitializeNamePool(uint8* NamePool)
         uintptr_t ChunkOffset = ((ComparisonIndex & ChunkMask) * Stride);
 
         uintptr_t PoolBase = reinterpret_cast<uintptr_t>(NamesArray);
-        
+
         uint8_t** ChunkPtrLocation = reinterpret_cast<uint8_t**>(PoolBase + BlocksOffset + BlockOffset);
         if (IsBadReadPtr(ChunkPtrLocation)) return nullptr;
 
@@ -538,20 +538,18 @@ bool NameArray::SetGNamesWithoutCommiting()
 
     if (NameArray::TryFindNameArray())
     {
-        snprintf(buffer, sizeof(buffer), "Found 'TNameEntryArray GNames' at offset 0x%lX\n", Off::InSDK::NameArray::GNames);
-        LogInfo(buffer);
+        LogSuccess("Found 'TNameEntryArray GNames' at offset 0x%lX", Off::InSDK::NameArray::GNames);
         Settings::Internal::bUseNamePool = false;
         return true;
     }
     else if (NameArray::TryFindNamePool())
     {
-        snprintf(buffer, sizeof(buffer), "Found 'FNamePool GNames' at offset 0x%lX\n", Off::InSDK::NameArray::GNames);
-        LogInfo(buffer);
+        LogSuccess("Found 'FNamePool GNames' at offset 0x%lX", Off::InSDK::NameArray::GNames);
         Settings::Internal::bUseNamePool = true;
         return true;
     }
 
-    LogInfo("\n\nCould not find GNames!\n\n");
+    LogError("Could not find GNames (neither TNameEntryArray nor FNamePool)");
     return false;
 }
 
@@ -561,20 +559,14 @@ void NameArray::PostInit()
     {
         LogInfo("NameArray: PostInit started. Detecting FNameBlockOffsetBits...");
 
-        // Start with the standard UE4/UE5 value (14 bits)
-        // 0x10 (16) is standard for many versions, but some games use 0xD like Fortnite (13)
-        // User snippet implies 18 bits (0x3FFFF mask)
-        // NameArray::FNameBlockOffsetBits = 0;
-#if 0
-        // Get the total number of chunks currently allocated in the name pool
-        const int32 TotalChunks = NameArray::GetNumChunks();
+        // Reverse-order iteration because newer objects are more likely to have a chunk-index equal to NumChunks - 1
+        NameArray::FNameBlockOffsetBits = 0xE;
 
-        // Reverse-order iteration: Newest objects are at the end of the array
-        // and are most likely to reside in the highest/last name chunks.
-        int i = ObjectArray::Num() - 1;
-
+        int i = ObjectArray::Num();
         while (i >= 0)
         {
+            const int32 CurrentBlock = NameArray::GetNumChunks();
+
             UEObject Obj = ObjectArray::GetByIndex(i);
 
             if (!Obj)
@@ -583,42 +575,55 @@ void NameArray::PostInit()
                 continue;
             }
 
-            // Calculate which chunk this object's name *would* fall into with current bits
             const int32 ObjNameChunkIdx = Obj.GetFName().GetCompIdx() >> NameArray::FNameBlockOffsetBits;
 
-            // If the calculated Chunk Index is greater than or equal to the TotalChunks available,
-            // it means our shift count is too LOW (resulting in a huge index number).
-            // We must increase the shift and restart the scan.
-            if (ObjNameChunkIdx > TotalChunks)
-            {
-                LogInfo("NameArray: ChunkIdx %d exceeds limit %d. Incrementing OffsetBits to 0x%X",
-                    ObjNameChunkIdx, TotalChunks, NameArray::FNameBlockOffsetBits + 1);
-
-                NameArray::FNameBlockOffsetBits++;
-                
-                // Restart the search from the end of the list with the new bit count
-                i = ObjectArray::Num() - 1;
-                continue;
-            }
-
-            // Optimization: If we find an object that falls exactly into the highest allocated chunk,
-            // we can be fairly confident our bits are correct (or at least correct enough for the current data).
-            if (ObjNameChunkIdx == (TotalChunks - 1))
-            {
+            if (ObjNameChunkIdx == CurrentBlock)
                 break;
+
+            if (ObjNameChunkIdx > CurrentBlock)
+            {
+                NameArray::FNameBlockOffsetBits++;
+                i = ObjectArray::Num();
             }
 
             i--;
         }
-#endif
         Off::InSDK::NameArray::FNamePoolBlockOffsetBits = NameArray::FNameBlockOffsetBits;
-         LogInfo("NameArray::FNameBlockOffsetBits: 0x%X", NameArray::FNameBlockOffsetBits);
+        
+        LogInfo("NameArray::FNameBlockOffsetBits: 0x%X", NameArray::FNameBlockOffsetBits);
     }
 }
 
+/* For UE 4.23+ FNamePool: walk the Blocks[] array and return the index of the
+ * last valid (non-null) block pointer. Layout-independent: doesn't depend on
+ * Off::NameArray::MaxChunkIndex pointing at a real CurrentBlock field, which is
+ * unreliable on FNamePool variants that store CurrentBlock inside an inner
+ * FNamePoolPart (e.g. NGR).
+ *
+ * For UE <= 4.22 TNameEntryArray: read the NumChunks field directly via the
+ * offset discovered in InitializeNameArray (MaxChunkIndex points at the chunks
+ * count adjacent to NumElements). That path doesn't have Blocks[] to walk. */
 int32 NameArray::GetNumChunks()
 {
-    return *reinterpret_cast<int32*>(GNames + Off::NameArray::MaxChunkIndex);
+    if (!Settings::Internal::bUseNamePool)
+        return *reinterpret_cast<int32*>(GNames + Off::NameArray::MaxChunkIndex);
+
+    uint8_t** Blocks = reinterpret_cast<uint8_t**>(GNames + Off::NameArray::ChunksStart);
+    if (IsBadReadPtr(Blocks))
+        return -1;
+
+    constexpr int32 FNameMaxBlocks = 0x2000; // UE source constant
+    int32 LastValid = -1;
+    for (int32 i = 0; i < FNameMaxBlocks; ++i)
+    {
+        if (IsBadReadPtr(&Blocks[i]))
+            break;
+        uint8_t* B = Blocks[i];
+        if (!B || IsBadReadPtr(B))
+            break;
+        LastValid = i;
+    }
+    return LastValid;
 }
 
 int32 NameArray::GetNumElements()
@@ -626,9 +631,44 @@ int32 NameArray::GetNumElements()
     return !Settings::Internal::bUseNamePool ? *reinterpret_cast<int32*>(GNames + Off::NameArray::NumElements) : 0;
 }
 
+/* Walk entries within the latest block and return the byte cursor of the next
+ * write position. Same rationale as GetNumChunks — avoids depending on a stored
+ * CurrentByteCursor field that's not at a reliable offset across UE variants. */
 int32 NameArray::GetByteCursor()
 {
-    return Settings::Internal::bUseNamePool ? *reinterpret_cast<int32*>(GNames + Off::NameArray::ByteCursor) : 0;
+    if (!Settings::Internal::bUseNamePool)
+        return 0;
+
+    const int32 CurrentBlock = GetNumChunks();
+    if (CurrentBlock < 0)
+        return 0;
+
+    uint8_t** Blocks = reinterpret_cast<uint8_t**>(GNames + Off::NameArray::ChunksStart);
+    uint8_t* BlockPtr = Blocks[CurrentBlock];
+    if (!BlockPtr || IsBadReadPtr(BlockPtr))
+        return 0;
+
+    constexpr int32 MaxBlockBytes = 0x20000; // UE source: FNameBlockSize
+    const int32 Stride = NameEntryStride > 0 ? NameEntryStride : 2;
+
+    int32 Cursor = 0;
+    while (Cursor + 2 < MaxBlockBytes)
+    {
+        const uint16_t Header = *reinterpret_cast<uint16_t*>(BlockPtr + Cursor);
+        if (Header == 0)
+            break;
+
+        const int32 Length = Header >> 6;
+        if (Length == 0)
+            break;
+
+        const bool bIsWide = (Header & 1) != 0;
+        int32 EntryBytes = 2 + (bIsWide ? Length * 2 : Length);
+        // Align up to NameEntryStride (2 normally, 4 for case-preserving builds).
+        EntryBytes = (EntryBytes + (Stride - 1)) & ~(Stride - 1);
+        Cursor += EntryBytes;
+    }
+    return Cursor;
 }
 
 FNameEntry NameArray::GetNameEntry(const void* Name)
