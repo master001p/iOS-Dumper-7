@@ -824,7 +824,7 @@ int32_t OffsetFinder::FindFunctionNativeFuncOffset()
 	uintptr_t SwitchLevel_Or_FOV = reinterpret_cast<uintptr_t>(ObjectArray::FindObjectFast("SwitchLevel", EClassCastFlags::Function).GetAddress());
 
 	// Some games don't have APlayerController::SwitchLevel(), so we replace it with APlayerController::FOV() which has the same FunctionFlags
-	if (SwitchLevel_Or_FOV == NULL)
+	if (SwitchLevel_Or_FOV == 0)
 		SwitchLevel_Or_FOV = reinterpret_cast<uintptr_t>(ObjectArray::FindObjectFast("FOV", EClassCastFlags::Function).GetAddress());
 
 	for (int i = 0x30; i < 0x140; i += sizeof(void*))

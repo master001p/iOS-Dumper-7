@@ -56,7 +56,7 @@ constexpr inline std::array FChunkedFixedUObjectArrayLayouts =
 		.NumElementsOffset = 0x00, // first
 		.MaxChunksOffset = 0x14,
 		.NumChunksOffset = 0x20,
-	}
+	},
 };
 
 bool IsAddressValidGObjects(const uintptr Address, const FFixedUObjectArrayLayout& Layout)
