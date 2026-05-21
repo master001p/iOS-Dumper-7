@@ -11,6 +11,7 @@
 namespace fs = std::filesystem;
 
 void DumpEditorOnlyMetadata(const fs::path& DumperFolder);
+void DumpUEOffsetsHeader(const fs::path& DumperFolder);
 
 template<typename GeneratorType>
 concept GeneratorImplementation = requires(GeneratorType t)
@@ -79,6 +80,8 @@ public:
                 bDumepdEditorOnlyMetadata = true;
                 DumpEditorOnlyMetadata(DumperFolder);
             }
+
+            DumpUEOffsetsHeader(DumperFolder);
         }
 
         if (!SetupFolders(GeneratorType::MainFolderName, GeneratorType::MainFolder, GeneratorType::SubfolderName, GeneratorType::Subfolder))
