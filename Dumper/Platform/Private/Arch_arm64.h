@@ -33,4 +33,14 @@ namespace Architecture_x86_64
 	uintptr_t FindFunctionEnd(const uintptr_t Address, uint32_t Range = 0xFFFF);
 
 	uintptr_t GetRipRelativeCalledFunction(const uintptr_t Address, const int32_t OneBasedFuncIndex, bool(*IsWantedTarget)(const uintptr_t CalledAddr) = nullptr);
+
+	/* Port of iOS_UEDumper's IGameProfile::findProcessEvent — scores each vtable
+	 * slot against UE-source-level fingerprints (UObject.Index load, FUObjectItem
+	 * stride MOV, UFunction.FunctionFlags+1/+2 LDRB, UStruct.Size LDR, ChildProperties
+	 * LDR) and returns the highest-scoring slot.
+	 * Caller must have populated Off::UObject::Index, Off::InSDK::ObjArray::FUObjectItemSize,
+	 * Off::UFunction::FunctionFlags, Off::UStruct::Size, Off::UStruct::ChildProperties
+	 * (or .Children), and Off::InSDK::ObjArray::GObjects before invoking.
+	 * Returns -1 on failure. */
+	int32_t FindProcessEventIndex(void** UObjectVTable);
 }
