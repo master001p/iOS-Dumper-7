@@ -21,24 +21,74 @@ inline void InitSettings()
 	Settings::InitArrayDimSizeSettings();
 }
 
+/* Scan __TEXT for the first IDA pattern that hits, ADRL-decode at hit+step,
+ * and return the result as an imagebase-relative offset (the form
+ * ObjectArray::Init / FName::Init expect). Returns 0 on failure.
+ *
+ * Lifted straight from Mj0x's UEGameProfile GetNamesPtr / GetGUObjectArrayPtr
+ * idiom — paste a vector of {ida_pattern, step} pairs and call. */
+static int32 FindOffsetByIDAPatterns(std::initializer_list<std::pair<const char*, int>> Patterns, const char* Label, const char* ModuleName = nullptr)
+{
+	const auto [ImageBase, ImageSize, Header, Slide] = GetImageBaseAndSize(ModuleName);
+	if (!ImageBase) { LogError("FindOffsetByIDAPatterns[%s]: module not found", Label); return 0; }
+
+	int Idx = 0;
+	for (const auto& [Pattern, Step] : Patterns)
+	{
+		++Idx;
+		uintptr_t Hit = reinterpret_cast<uintptr_t>(FindPattern(Pattern, "__TEXT", 0));
+		if (!Hit) continue;
+
+		uintptr_t Resolved = ASMUtils::ResolveADRL(Hit + Step);
+		if (!Resolved || Resolved < ImageBase || Resolved >= (ImageBase + ImageSize)) continue;
+
+		const int32 Offset = static_cast<int32>(Resolved - ImageBase);
+		LogInfo("FindOffsetByIDAPatterns[%s]: pattern #%d hit @ +0x%lX -> 0x%X", Label, Idx, Hit - ImageBase, Offset);
+		return Offset;
+	}
+	LogError("FindOffsetByIDAPatterns[%s]: no pattern matched", Label);
+	return 0;
+}
+
 
 void Generator::InitEngineCore()
 {
 	LogInfo("Initializing Engine Core...");
-
-	/* manual override */
-	//ObjectArray::Init(/*GObjects*/, /*ChunkSize*/, /*bIsChunked*/);
-	//FName::Init(/*FName::AppendString*/);
-	//FName::Init(/*FName::ToString, FName::EOffsetOverrideType::ToString*/);
-	//FName::Init(/*GNames, FName::EOffsetOverrideType::GNames, true/false*/);
-	//Off::InSDK::ProcessEvent::InitPE(/*PEIndex*/);
-    
-    ObjectArray::Init();
-	FName::Init((int32)0x0E226540, FName::EOffsetOverrideType::GNames, true, "NGR"); // HOK: World
-//	FName::Init((int32)0x0d59d400, FName::EOffsetOverrideType::GNames, true, "UAGame"); // ArenaBreakout
-//	FName::Init((int32)0x05E4AD40, FName::EOffsetOverrideType::GNames, true, "ShooterGame"); // ARK Revamp
-//	FName::Init((int32)0x420fc48, FName::EOffsetOverrideType::GNames, false /* Not FNamePool */, "ShooterGame"); // ARK 2.0
-//	FName::Init();
+	ObjectArray::Init();
+	/* Per-game FName decryption hooks. Install BEFORE FName::Init.
+	 * Pick whichever match the target game; unused hooks default to identity.
+	 *
+	 *   (1) Raw FNameEntry-bytes transform — header itself is encrypted.
+	 *       Returns a (possibly scratch) entry pointer the reader uses instead.
+	 * InitNameEntryDecryption([](uint8_t* Entry) -> uint8_t* {
+	 *     // ... bytes-in / bytes-out ...
+	 *     return Entry;
+	 * });
+	 *
+	 *   (2) Output std::string transform — DeltaForce. Header is plaintext,
+	 *       chars are XOR'd. Runs at the tail of FNameEntry::GetString on the
+	 *       already-decoded std::string.
+	 * InitNameStringDecryption([](std::string Decoded) -> std::string {
+	 *     // ... XOR Decoded chars in-place, see DeltaForce example in ReadMe.md ...
+	 *     return Decoded;
+	 * });
+	 *
+	 *   (3) TNameEntryArray pointer chain — PUBG (UE 4.17, bIsNamePool == false):
+	 * InitNameArrayDecryption([](uintptr_t Start) -> uintptr_t {
+	 *     // ... pointer-chain walk, see PUBG example in ReadMe.md ...
+	 *     return Start;
+	 * });
+	 *
+	 *   (4) FNamePool pointer indirection — Valorant (UE 4.23+, bIsNamePool == true):
+	 * InitNamePoolDecryption([](uintptr_t Start) -> uintptr_t {
+	 *     // ... reassemble pointer from scattered bytes ...
+	 *     return Start;
+	 * });
+	 */
+	int32 GNamesOff = FindOffsetByIDAPatterns({
+		{"? ? ? ? 29 01 15 91 28 21 08 8B", 0}, // HOK: World
+	}, "GNames");
+	FName::Init(GNamesOff, FName::EOffsetOverrideType::GNames, true, "NGR");
 	Off::Init();
 	PropertySizes::Init();
 	Off::InSDK::ProcessEvent::InitPE(); //Must be at this position, relies on offsets initialized in Off::Init()
