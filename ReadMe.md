@@ -12,10 +12,12 @@ Originally a port of [Encryqed/Dumper-7](https://github.com/Encryqed/Dumper-7) (
 * **Dynamic offset scanning** — `GObjects`, `GNames`, `GWorld`, every `UObject`/`UStruct`/`UFunction`/`UProperty` field offset is discovered without hardcoded values for most games.
 * **ProcessEvent autodiscovery** — ports the iOS_UEDumper vtable-scoring algorithm: walks UObject's vtable and fingerprints each slot against UE-source-level invariants (`UObject.Index` load, `FUObjectItem` stride, `UFunction.FunctionFlags+1/+2` byte loads, `UStruct.Size` LDR, `ChildProperties` LDR, ADRP chain to GUObjectArray). No more manual `InitPE(idx)` for most games.
 * **FNamePool sharded-layout support** — `GetNumChunks` / `GetByteCursor` walk `Blocks[]` and the live block dynamically instead of relying on fixed-offset header fields that don't exist in every UE variant.
-* **Per-game decryption hooks** — three independent hooks for games that XOR/scramble different layers:
+* **Per-game decryption hooks** — five independent hooks for games that XOR/scramble different layers:
   * `InitObjectArrayDecryption` — UObject pointer XOR (Back4Blood, Multiversus)
-  * `InitNameArrayDecryption` — per-FNameEntry content XOR (DeltaForce)
-  * `InitNamePoolDecryption` — NamePoolData pointer indirection (PUBG, Valorant)
+  * `InitNameEntryDecryption` — raw FNameEntry-bytes transform (header itself encrypted)
+  * `InitNameStringDecryption` — output std::string transform inside `ToString` (DeltaForce)
+  * `InitNameArrayDecryption` — TNameEntryArray pointer indirection (PUBG, UE ≤ 4.22)
+  * `InitNamePoolDecryption` — FNamePool pointer indirection (Valorant, UE 4.23+)
 * **Floating ImGui menu** — a draggable logo appears ~3 seconds after launch; tap to open, drag if it covers game UI.
 * **UE 4.17 → 4.26** verified (ARK 2.0, ARK Revamp, Special Forces 3, ArenaBreakout, HOK: World / NGR).
 
@@ -117,38 +119,57 @@ Off::InSDK::ProcessEvent::InitPE(70);  // direct vtable index
 ### Per-Game Decryption Hooks
 
 ```cpp
-// (a) Back4Blood / Multiversus — UObject pointer XOR
+// (a) Back4Blood / Multiversus — UObject pointer XOR.
+//     Install BEFORE ObjectArray::Init.
 InitObjectArrayDecryption([](void* ObjPtr) -> uint8* {
     return reinterpret_cast<uint8*>(uint64(ObjPtr) ^ 0x8375ACDE);
 });
 
-// (b) DeltaForce — FNameEntry char-content XOR (per entry, per-Len key)
-InitNameArrayDecryption([](uint8_t* Entry) -> uint8_t* {
-    static thread_local uint8_t Scratch[0x402];
-    const uint16_t Header = *reinterpret_cast<uint16_t*>(Entry);
-    const int32_t  Len    = Header >> 6;
-    *reinterpret_cast<uint16_t*>(Scratch) = Header;
-    if (Len <= 0 || (Header & 1)) return Entry;
-    uint32_t Key = /* per-Len key derivation, see Generator.cpp comments */;
-    for (int i = 0; i < Len; ++i)
-        Scratch[2 + i] = (Key & 0x80) ^ ~Entry[2 + i];
-    return Scratch;
+// (b) DeltaForce — output-string XOR (header is plaintext, chars are XOR'd).
+//     Install BEFORE FName::Init. Runs at the tail of FNameEntry::GetString,
+//     after the entry has been decoded normally.
+InitNameStringDecryption([](std::string Decoded) -> std::string {
+    const uint32_t Len = (uint32_t)Decoded.size();
+    if (Len == 0) return Decoded;
+
+    uint32_t Key = 0;
+    switch (Len % 9)
+    {
+        case 0: Key = (Len & 0x1F) + Len; break;
+        case 1: Key = (Len ^ 0xDF) + Len; break;
+        case 2: Key = (Len | 0xCF) + Len; break;
+        case 3: Key = 33 * Len;           break;
+        case 4: Key = Len + (Len >> 2);   break;
+        case 5: Key = 3 * Len + 5;        break;
+        case 6: Key = ((4 * Len) | 5) + Len; break;
+        case 7: Key = ((Len >> 4) | 7) + Len; break;
+        case 8: Key = (Len ^ 0xC) + Len;  break;
+        default: Key = (Len ^ 0x40) + Len; break;
+    }
+    for (uint32_t i = 0; i < Len; ++i)
+        Decoded[i] = (char)((Key & 0x80) ^ ~(uint8_t)Decoded[i]);
+    return Decoded;
 });
 
-// (d) PUBG — ADRP+ADD points at a pointer chain that must be walked.
-//     Every dereference is guarded by IsBadReadPtr because corrupted /
-//     mid-init pool states return junk values that look pointer-ish.
-InitNamePoolDecryption([](uintptr_t Start) -> uintptr_t {
-    if (!Start || IsBadReadPtr((void*)Start) || IsBadReadPtr((void*)(Start + 8)))
+// (c) PUBG (UE 4.17, TNameEntryArray) — ADRP+ADD lands on an encrypted struct
+//     [int32 Header | uintptr_t* FirstHop]; walk Hops = (Header - 100) / 3
+//     dereferences and return the resulting TNameEntryArray** (the runtime
+//     does the final deref). Mirrors Mj0x's PUBG GetNamesPtr verbatim.
+//     Install BEFORE FName::Init with bIsNamePool == false.
+//     `RawAddr` is `ImageBase + GNamesOffset` (no upfront deref). Every
+//     dereference is guarded by IsBadReadPtr because corrupted / mid-init
+//     states return junk values that look pointer-ish.
+InitNameArrayDecryption([](uintptr_t RawAddr) -> uintptr_t {
+    if (!RawAddr || IsBadReadPtr((void*)RawAddr) || IsBadReadPtr((void*)(RawAddr + 8)))
         return 0;
 
-    const int32_t Header = *reinterpret_cast<int32_t*>(Start);
-    if (Header < 100) return 0;                       // formula requires (Header - 100) / 3 >= 1
+    const int32_t Header = *reinterpret_cast<int32_t*>(RawAddr);
+    if (Header < 100) return 0;
     uint32_t Hops = (uint32_t)((Header - 100) / 3);
-    if (Hops == 0 || Hops > 16) return 0;             // bound the chain to our scratch array
+    if (Hops == 0 || Hops > 16) return 0;
 
     uint64_t Chain[16]{};
-    Chain[Hops - 1] = *reinterpret_cast<int64_t*>(Start + 8);
+    Chain[Hops - 1] = *reinterpret_cast<int64_t*>(RawAddr + 8);
 
     while (Hops >= 2) {
         const uintptr_t Next = Chain[Hops - 1];
@@ -156,8 +177,9 @@ InitNamePoolDecryption([](uintptr_t Start) -> uintptr_t {
         Chain[Hops - 2] = *reinterpret_cast<int64_t*>(Next);
         --Hops;
     }
-    return Chain[0];
+    return Chain[0]; // TNameEntryArray** — runtime derefs once
 });
+
 ```
 
 Each `InitX(...)` macro auto-captures the lambda source string for future SDK emission.

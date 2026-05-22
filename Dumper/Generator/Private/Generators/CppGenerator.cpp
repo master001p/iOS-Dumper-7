@@ -3,6 +3,8 @@
 #include <array>
 #include <algorithm>
 
+#include <cctype>
+
 #include "Unreal/ObjectArray.h"
 #include "Unreal/NameArray.h"
 #include "Generators/CppGenerator.h"
@@ -3456,6 +3458,89 @@ R"({
 }
 
 
+/* Reformat a captured-via-stringification lambda source so it doesn't emit as a
+ * single mega-line. Macro stringification collapses all inter-token whitespace
+ * to single spaces, so the captured text has no newlines.
+ *
+ * Heuristic: open-brace -> newline+indent, close-brace -> newline (dedent),
+ * semicolon (at paren-depth 0) -> newline. String/char literals are passed
+ * through verbatim so payload contents aren't reflowed. */
+static std::string PrettyPrintCapturedLambda(std::string Raw)
+{
+	std::string Out;
+	Out.reserve(Raw.size() * 2);
+
+	int Depth = 0;
+	int ParenDepth = 0;
+	bool InString = false;
+	char StringDelim = 0;
+
+	auto NewlineIndent = [&](int D)
+	{
+		Out += '\n';
+		Out += '\t';                       // base indent (struct member line)
+		for (int i = 0; i < D; ++i) Out += '\t';
+	};
+
+	for (size_t i = 0; i < Raw.size(); ++i)
+	{
+		const char c = Raw[i];
+
+		if (InString)
+		{
+			Out += c;
+			if (c == StringDelim && (i == 0 || Raw[i-1] != '\\')) InString = false;
+			continue;
+		}
+		if (c == '"' || c == '\'')
+		{
+			InString = true;
+			StringDelim = c;
+			Out += c;
+			continue;
+		}
+
+		if (c == '(') { ++ParenDepth; Out += c; continue; }
+		if (c == ')') { --ParenDepth; Out += c; continue; }
+
+		if (c == '{')
+		{
+			size_t j = i + 1;
+			while (j < Raw.size() && std::isspace(static_cast<unsigned char>(Raw[j]))) ++j;
+			if (j < Raw.size() && Raw[j] == '}') { Out += "{}"; i = j; continue; }
+			Out += c;
+			++Depth;
+			NewlineIndent(Depth);
+			while (i + 1 < Raw.size() && std::isspace(static_cast<unsigned char>(Raw[i+1]))) ++i;
+			continue;
+		}
+		if (c == '}')
+		{
+			--Depth;
+			NewlineIndent(Depth);
+			Out += c;
+			continue;
+		}
+		if (c == ';' && ParenDepth == 0)
+		{
+			Out += c;
+			while (i + 1 < Raw.size() && std::isspace(static_cast<unsigned char>(Raw[i+1]))) ++i;
+			if (i + 1 < Raw.size() && Raw[i+1] != '}') NewlineIndent(Depth);
+			continue;
+		}
+
+		if (std::isspace(static_cast<unsigned char>(c)))
+		{
+			if (Out.empty() || Out.back() == ' ' || Out.back() == '\t' || Out.back() == '\n') continue;
+			Out += ' ';
+			continue;
+		}
+
+		Out += c;
+	}
+	return Out;
+}
+
 void CppGenerator::GenerateBasicFiles(StreamType& BasicHpp, StreamType& BasicCpp, StreamType& AssertionsFile)
 {
 	namespace CppSettings = Settings::CppGenerator;
@@ -3497,6 +3582,7 @@ void CppGenerator::GenerateBasicFiles(StreamType& BasicHpp, StreamType& BasicCpp
 #include <string>
 #include <functional>
 #include <type_traits>
+#include <mach/mach.h>
 )", (!Settings::Config::SDKNamespaceName.empty() ? SDKMacroDefinitions : ""));
 
 	WriteFileHead(BasicHpp, nullptr, EFileType::BasicHpp, "Basic file containing structs required by the SDK", CustomIncludes);
@@ -3507,6 +3593,25 @@ void CppGenerator::GenerateBasicFiles(StreamType& BasicHpp, StreamType& BasicCpp
 	BasicHpp <<
 		R"(
 using namespace UC;
+
+/* Mach-backed IsBadReadPtr — emitted so generated decryption lambdas
+ * (FNameEntry::DecryptName, TNameEntryArray::DecryptNameArray, FNamePool::DecryptNamePool)
+ * can probe pointers safely without the consumer providing one. */
+#ifndef DUMPER7_SDK_HAS_ISBADREADPTR
+#define DUMPER7_SDK_HAS_ISBADREADPTR
+inline bool IsBadReadPtr(const void* Ptr)
+{
+	if (!Ptr) return true;
+	uint8_t Probe = 0;
+	vm_size_t Got = 0;
+	kern_return_t KR = vm_read_overwrite(mach_task_self(),
+		reinterpret_cast<vm_address_t>(Ptr), 1,
+		reinterpret_cast<vm_address_t>(&Probe), &Got);
+	return (KR == KERN_INVALID_ADDRESS || KR == KERN_MEMORY_FAILURE
+	     || KR == KERN_MEMORY_ERROR    || KR == KERN_PROTECTION_FAILURE);
+}
+inline bool IsBadReadPtr(uintptr_t Addr) { return IsBadReadPtr(reinterpret_cast<const void*>(Addr)); }
+#endif
 
 )";
 
@@ -3813,7 +3918,7 @@ ClassType* GetDefaultObjImpl()
 		return reinterpret_cast<uint8*>(ObjPtr);
 	})";
 
-	std::string DecryptionStrToUse = ObjectArray::DecryptionLambdaStr.empty() ? DefaultDecryption : std::move(ObjectArray::DecryptionLambdaStr);
+	std::string DecryptionStrToUse = ObjectArray::DecryptionLambdaStr.empty() ? DefaultDecryption : PrettyPrintCapturedLambda(std::move(ObjectArray::DecryptionLambdaStr));
 //#error Fix this and fix alignof(UObject) == 0x1
 	if (Off::InSDK::ObjArray::ChunkSize <= 0)
 	{
@@ -4083,9 +4188,19 @@ public:)";
 		},
 	};
 
-	constexpr const char* DefaultNameDecryption = R"([](uint8* RawEntryPtr) -> uint8*
+	constexpr const char* DefaultNameEntryDecryption = R"([](uint8* RawEntryPtr) -> uint8*
 	{
 		return RawEntryPtr;
+	})";
+
+	constexpr const char* DefaultNameStringDecryption = R"([](std::string Decoded) -> std::string
+	{
+		return Decoded;
+	})";
+
+	constexpr const char* DefaultNameArrayDecryption = R"([](uintptr_t EncryptedNameArrayData) -> uintptr_t
+	{
+		return EncryptedNameArrayData;
 	})";
 
 	constexpr const char* DefaultNamePoolDecryption = R"([](uintptr_t EncryptedNamePoolData) -> uintptr_t
@@ -4093,8 +4208,10 @@ public:)";
 		return EncryptedNamePoolData;
 	})";
 
-	std::string NameDecryptionStrToUse = NameArray::DecryptionLambdaStr.empty() ? DefaultNameDecryption : std::move(NameArray::DecryptionLambdaStr);
-	std::string NamePoolDecryptionStrToUse = NameArray::NamePoolDecryptionLambdaStr.empty() ? DefaultNamePoolDecryption : std::move(NameArray::NamePoolDecryptionLambdaStr);
+	std::string NameEntryDecryptionStrToUse  = NameArray::NameEntryDecryptionLambdaStr.empty()  ? DefaultNameEntryDecryption  : PrettyPrintCapturedLambda(std::move(NameArray::NameEntryDecryptionLambdaStr));
+	std::string NameStringDecryptionStrToUse = NameArray::NameStringDecryptionLambdaStr.empty() ? DefaultNameStringDecryption : PrettyPrintCapturedLambda(std::move(NameArray::NameStringDecryptionLambdaStr));
+	std::string NameArrayDecryptionStrToUse  = NameArray::NameArrayDecryptionLambdaStr.empty()  ? DefaultNameArrayDecryption  : PrettyPrintCapturedLambda(std::move(NameArray::NameArrayDecryptionLambdaStr));
+	std::string NamePoolDecryptionStrToUse   = NameArray::NamePoolDecryptionLambdaStr.empty()   ? DefaultNamePoolDecryption   : PrettyPrintCapturedLambda(std::move(NameArray::NamePoolDecryptionLambdaStr));
 
 	if (Off::InSDK::Name::AppendNameToString == 0x0 && !Settings::Internal::bUseNamePool)
 	{
@@ -4107,7 +4224,12 @@ public:)";
 		{
 			PredefinedMember {
 				.Comment = "NOT AUTO-GENERATED PROPERTY",
-				.Type = ("static constexpr auto DecryptName = " + NameDecryptionStrToUse), .Offset = 0x0, .Size = 0x0, .ArrayDim = 0x1, .Alignment = alignof(void*),
+				.Type = ("static constexpr auto DecryptName = " + NameEntryDecryptionStrToUse), .Offset = 0x0, .Size = 0x0, .ArrayDim = 0x1, .Alignment = alignof(void*),
+				.bIsStatic = true, .bIsZeroSizeMember = true, .bIsBitField = false, .BitIndex = 0xFF
+			},
+			PredefinedMember {
+				.Comment = "NOT AUTO-GENERATED PROPERTY",
+				.Type = ("static constexpr auto DecryptString = " + NameStringDecryptionStrToUse), .Offset = 0x0, .Size = 0x0, .ArrayDim = 0x1, .Alignment = alignof(void*),
 				.bIsStatic = true, .bIsZeroSizeMember = true, .bIsBitField = false, .BitIndex = 0xFF
 			},
 			PredefinedMember {
@@ -4144,12 +4266,12 @@ R"({
 				.ReturnType = "std::string", .NameWithParams = "GetString()", .Body =
 R"({
 	const auto* Self = reinterpret_cast<const FNameEntry*>(DecryptName(reinterpret_cast<uint8*>(const_cast<FNameEntry*>(this))));
+	std::string Out;
 	if (Self->NameIndex & NameWideMask)
-	{
-		return UC::TCharToUtf8(Self->Name.WideName, std::char_traits<TCHAR>::length(Self->Name.WideName));
-	}
-
-	return Self->Name.AnsiName;
+		Out = UC::TCharToUtf8(Self->Name.WideName, std::char_traits<TCHAR>::length(Self->Name.WideName));
+	else
+		Out = Self->Name.AnsiName;
+	return DecryptString(std::move(Out));
 })",
 				.bIsStatic = false, .bIsConst = true, .bIsBodyInline = true
 			},
@@ -4165,6 +4287,11 @@ R"({
 		/* class TNameEntryArray */
 		TNameEntryArray.Properties =
 		{
+			PredefinedMember {
+				.Comment = "NOT AUTO-GENERATED PROPERTY",
+				.Type = ("static constexpr auto DecryptNameArray = " + NameArrayDecryptionStrToUse), .Offset = 0x0, .Size = 0x0, .ArrayDim = 0x1, .Alignment = alignof(void*),
+				.bIsStatic = true, .bIsZeroSizeMember = true, .bIsBitField = false, .BitIndex = 0xFF
+			},
 			PredefinedMember {
 				.Comment = "NOT AUTO-GENERATED PROPERTY",
 				.Type = "constexpr uint32", .Name = "ChunkTableSize", .Offset = 0x0, .Size = sizeof(uint32), .ArrayDim = 0x1, .Alignment = alignof(uint32),
@@ -4318,7 +4445,12 @@ R"({
 		{
 			PredefinedMember {
 				.Comment = "NOT AUTO-GENERATED PROPERTY",
-				.Type = ("static constexpr auto DecryptName = " + NameDecryptionStrToUse), .Offset = 0x0, .Size = 0x0, .ArrayDim = 0x1, .Alignment = alignof(void*),
+				.Type = ("static constexpr auto DecryptName = " + NameEntryDecryptionStrToUse), .Offset = 0x0, .Size = 0x0, .ArrayDim = 0x1, .Alignment = alignof(void*),
+				.bIsStatic = true, .bIsZeroSizeMember = true, .bIsBitField = false, .BitIndex = 0xFF
+			},
+			PredefinedMember {
+				.Comment = "NOT AUTO-GENERATED PROPERTY",
+				.Type = ("static constexpr auto DecryptString = " + NameStringDecryptionStrToUse), .Offset = 0x0, .Size = 0x0, .ArrayDim = 0x1, .Alignment = alignof(void*),
 				.bIsStatic = true, .bIsZeroSizeMember = true, .bIsBitField = false, .BitIndex = 0xFF
 			},
 			PredefinedMember {
@@ -4348,12 +4480,12 @@ R"({
 				.ReturnType = "std::string", .NameWithParams = "GetString()", .Body =
 R"({
 	const auto* Self = reinterpret_cast<const FNameEntry*>(DecryptName(reinterpret_cast<uint8*>(const_cast<FNameEntry*>(this))));
+	std::string Out;
 	if (Self->Header.bIsWide)
-	{
-		return UC::TCharToUtf8(Self->Name.WideName, Self->Header.Len);
-	}
-
-	return std::string(Self->Name.AnsiName, Self->Header.Len);
+		Out = UC::TCharToUtf8(Self->Name.WideName, Self->Header.Len);
+	else
+		Out = std::string(Self->Name.AnsiName, Self->Header.Len);
+	return DecryptString(std::move(Out));
 })",
 				.bIsStatic = false, .bIsConst = true, .bIsBodyInline = true
 			},
@@ -4749,6 +4881,49 @@ std::format(R"({{
 	{0} = {2}reinterpret_cast<{1}{2}>(Location);
 }})", NameArrayName, NameArrayType, (Off::InSDK::Name::AppendNameToString == 0 && !Settings::Internal::bUseNamePool ? "*" : "")),
 			.bIsStatic = true, .bIsConst = false, .bIsBodyInline = true
+			});
+	}
+
+	/* Static `Init()` — resolves AppendString or GNames from imagebase and
+	 * applies the matching per-game decryption hook. The consumer calls
+	 * `FName::Init()` once at startup and never touches the static directly:
+	 *
+	 *   SDK::FName::Init();  // populates AppendString or GNames
+	 *
+	 * For TNameEntryArray games (PUBG): runs DecryptNameArray on the raw
+	 * `ImageBase + Offsets::GNames`, then derefs once to get the live array.
+	 * For FNamePool games (Valorant): runs DecryptNamePool on the raw address.
+	 * For AppendString games: just casts `ImageBase + Offsets::AppendString`. */
+	{
+		std::string InitBody;
+		if (Off::InSDK::Name::AppendNameToString != 0)
+		{
+			InitBody = R"({
+	AppendString = reinterpret_cast<void*>(InSDKUtils::GetImageBase() + Offsets::AppendString);
+})";
+		}
+		else if (Settings::Internal::bUseNamePool)
+		{
+			InitBody = R"({
+	const uintptr_t Raw = InSDKUtils::GetImageBase() + Offsets::GNames;
+	GNames = reinterpret_cast<FNamePool*>(FNamePool::DecryptNamePool(Raw));
+})";
+		}
+		else
+		{
+			InitBody = R"({
+	const uintptr_t Raw = InSDKUtils::GetImageBase() + Offsets::GNames;
+	const uintptr_t PtrToPtr = TNameEntryArray::DecryptNameArray(Raw);
+	GNames = *reinterpret_cast<TNameEntryArray**>(PtrToPtr);
+})";
+		}
+
+		FName.Functions.insert(
+			FName.Functions.begin() + 1,
+			PredefinedFunction{
+				.CustomComment = "",
+				.ReturnType = "void", .NameWithParams = "Init()", .Body = InitBody,
+				.bIsStatic = true, .bIsConst = false, .bIsBodyInline = true
 			});
 	}
 

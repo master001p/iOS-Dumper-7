@@ -257,6 +257,8 @@ std::string FName::ToRawString() const
 	if (!Address)
 		return "None";
 
+	// DecryptNameString runs at the raw-bytes level inside NameArray::GetStr,
+	// so the wide string here is already decrypted.
 	return UtfN::WStringToString(ToRawWString());
 }
 
