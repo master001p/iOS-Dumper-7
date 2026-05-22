@@ -4266,11 +4266,11 @@ R"({
 				.ReturnType = "std::string", .NameWithParams = "GetString()", .Body =
 R"({
 	const auto* Self = reinterpret_cast<const FNameEntry*>(DecryptName(reinterpret_cast<uint8*>(const_cast<FNameEntry*>(this))));
-	std::string Out;
 	if (Self->NameIndex & NameWideMask)
-		Out = UC::TCharToUtf8(Self->Name.WideName, std::char_traits<TCHAR>::length(Self->Name.WideName));
-	else
-		Out = Self->Name.AnsiName;
+		return UC::TCharToUtf8(Self->Name.WideName, std::char_traits<TCHAR>::length(Self->Name.WideName));
+	// Decrypt narrow chars at raw-bytes level (legacy entries are null-terminated,
+	// so length comes from strlen — works when encrypted output has no embedded 0x00).
+	std::string Out = Self->Name.AnsiName;
 	return DecryptString(std::move(Out));
 })",
 				.bIsStatic = false, .bIsConst = true, .bIsBodyInline = true
@@ -4480,11 +4480,14 @@ R"({
 				.ReturnType = "std::string", .NameWithParams = "GetString()", .Body =
 R"({
 	const auto* Self = reinterpret_cast<const FNameEntry*>(DecryptName(reinterpret_cast<uint8*>(const_cast<FNameEntry*>(this))));
-	std::string Out;
+	// Wide path: no DecryptString. The hook is for narrow byte XOR; wide encryption
+	// (no known shipping game does this) would need UTF-16-aware math, not a byte hook.
 	if (Self->Header.bIsWide)
-		Out = UC::TCharToUtf8(Self->Name.WideName, Self->Header.Len);
-	else
-		Out = std::string(Self->Name.AnsiName, Self->Header.Len);
+		return UC::TCharToUtf8(Self->Name.WideName, Self->Header.Len);
+	// Decrypt narrow chars at raw-bytes level with the entry's true Len, BEFORE any
+	// further conversion — UTF-8 inflation of XOR'd bytes would change the string's
+	// size and break per-Len key derivation in the hook.
+	std::string Out(Self->Name.AnsiName, Self->Header.Len);
 	return DecryptString(std::move(Out));
 })",
 				.bIsStatic = false, .bIsConst = true, .bIsBodyInline = true

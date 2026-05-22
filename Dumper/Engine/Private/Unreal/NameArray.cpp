@@ -107,6 +107,9 @@ void FNameEntry::Init(const uint8* FirstChunkPtr, int64 NameEntryStringOffset)
                 return NameArray::GetNameEntry(NextEntryIndex).GetWString();
             }
 
+            // Wide-char path: no DecryptNameString applied. The hook signature is for
+            // narrow byte XOR; wide encryption (no known shipping game does this) would
+            // need UTF-16-aware math, not a byte-level hook.
             if (HeaderWithoutNumber & NameWideMask)
                 return UnrealString(reinterpret_cast<const TCHAR*>(NameEntry + Off::FNameEntry::NamePool::StringOffset), NameLen);
 
@@ -168,10 +171,19 @@ void FNameEntry::Init(const uint8* FirstChunkPtr, int64 NameEntryStringOffset)
             const int32 NameIdx = *reinterpret_cast<int32*>(NameEntry + Off::FNameEntry::NameArray::IndexOffset);
             const void* NameString = reinterpret_cast<void*>(NameEntry + Off::FNameEntry::NameArray::StringOffset);
 
+            // Wide-char path: no per-string decryption hook applied. The DecryptNameString
+            // signature is for narrow byte XOR; wide encryption (if any future game does it)
+            // would need UTF-16-aware math, not a byte-level hook.
             if (NameIdx & NameWideMask)
                 return UnrealString(reinterpret_cast<const TCHAR*>(NameString));
 
-            return UtfN::StringToWString<std::string>(reinterpret_cast<const char*>(NameString));
+            // Decrypt at the raw-bytes level BEFORE wide conversion. Legacy entries are
+            // null-terminated, so length comes from strlen — encryption schemes whose output
+            // never contains 0x00 mid-string (the common case) work cleanly.
+            const char* RawChars = reinterpret_cast<const char*>(NameString);
+            std::string RawAnsi(RawChars, strlen(RawChars));
+            RawAnsi = NameArray::DecryptNameString(std::move(RawAnsi));
+            return UtfN::StringToWString<std::string>(RawAnsi);
         };
     }
 }
