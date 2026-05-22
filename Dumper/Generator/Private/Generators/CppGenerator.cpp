@@ -4,6 +4,7 @@
 #include <algorithm>
 
 #include "Unreal/ObjectArray.h"
+#include "Unreal/NameArray.h"
 #include "Generators/CppGenerator.h"
 #include "Wrappers/MemberWrappers.h"
 #include "Managers/MemberManager.h"
@@ -4082,7 +4083,19 @@ public:)";
 		},
 	};
 
-	
+	constexpr const char* DefaultNameDecryption = R"([](uint8* RawEntryPtr) -> uint8*
+	{
+		return RawEntryPtr;
+	})";
+
+	constexpr const char* DefaultNamePoolDecryption = R"([](uintptr_t EncryptedNamePoolData) -> uintptr_t
+	{
+		return EncryptedNamePoolData;
+	})";
+
+	std::string NameDecryptionStrToUse = NameArray::DecryptionLambdaStr.empty() ? DefaultNameDecryption : std::move(NameArray::DecryptionLambdaStr);
+	std::string NamePoolDecryptionStrToUse = NameArray::NamePoolDecryptionLambdaStr.empty() ? DefaultNamePoolDecryption : std::move(NameArray::NamePoolDecryptionLambdaStr);
+
 	if (Off::InSDK::Name::AppendNameToString == 0x0 && !Settings::Internal::bUseNamePool)
 	{
 		/* struct FNameEntry */
@@ -4092,6 +4105,11 @@ public:)";
 
 		FNameEntry.Properties =
 		{
+			PredefinedMember {
+				.Comment = "NOT AUTO-GENERATED PROPERTY",
+				.Type = ("static constexpr auto DecryptName = " + NameDecryptionStrToUse), .Offset = 0x0, .Size = 0x0, .ArrayDim = 0x1, .Alignment = alignof(void*),
+				.bIsStatic = true, .bIsZeroSizeMember = true, .bIsBitField = false, .BitIndex = 0xFF
+			},
 			PredefinedMember {
 				.Comment = "NOT AUTO-GENERATED PROPERTY",
 				.Type = "constexpr int32", .Name = "NameWideMask", .Offset = 0x0, .Size = sizeof(int32), .ArrayDim = 0x1, .Alignment = alignof(int32),
@@ -4125,12 +4143,13 @@ R"({
 				.CustomComment = "",
 				.ReturnType = "std::string", .NameWithParams = "GetString()", .Body =
 R"({
-	if (IsWide())
+	const auto* Self = reinterpret_cast<const FNameEntry*>(DecryptName(reinterpret_cast<uint8*>(const_cast<FNameEntry*>(this))));
+	if (Self->NameIndex & NameWideMask)
 	{
-		return UC::TCharToUtf8(Name.WideName, std::char_traits<TCHAR>::length(Name.WideName));
+		return UC::TCharToUtf8(Self->Name.WideName, std::char_traits<TCHAR>::length(Self->Name.WideName));
 	}
 
-	return Name.AnsiName;
+	return Self->Name.AnsiName;
 })",
 				.bIsStatic = false, .bIsConst = true, .bIsBodyInline = true
 			},
@@ -4299,6 +4318,11 @@ R"({
 		{
 			PredefinedMember {
 				.Comment = "NOT AUTO-GENERATED PROPERTY",
+				.Type = ("static constexpr auto DecryptName = " + NameDecryptionStrToUse), .Offset = 0x0, .Size = 0x0, .ArrayDim = 0x1, .Alignment = alignof(void*),
+				.bIsStatic = true, .bIsZeroSizeMember = true, .bIsBitField = false, .BitIndex = 0xFF
+			},
+			PredefinedMember {
+				.Comment = "NOT AUTO-GENERATED PROPERTY",
 				.Type = "struct FNameEntryHeader", .Name = "Header", .Offset = Off::FNameEntry::NamePool::HeaderOffset, .Size = FNameEntryHeaderSize, .ArrayDim = 0x1, .Alignment = 0x2,
 				.bIsStatic = false, .bIsZeroSizeMember = false, .bIsBitField = false, .BitIndex = 0xFF
 			},
@@ -4323,12 +4347,13 @@ R"({
 				.CustomComment = "",
 				.ReturnType = "std::string", .NameWithParams = "GetString()", .Body =
 R"({
-	if (IsWide())
+	const auto* Self = reinterpret_cast<const FNameEntry*>(DecryptName(reinterpret_cast<uint8*>(const_cast<FNameEntry*>(this))));
+	if (Self->Header.bIsWide)
 	{
-		return UC::TCharToUtf8(Name.WideName, Header.Len);
+		return UC::TCharToUtf8(Self->Name.WideName, Self->Header.Len);
 	}
 
-	return std::string(Name.AnsiName, Header.Len);
+	return std::string(Self->Name.AnsiName, Self->Header.Len);
 })",
 				.bIsStatic = false, .bIsConst = true, .bIsBodyInline = true
 			},
@@ -4343,6 +4368,11 @@ R"({
 
 		FNamePool.Properties =
 		{
+			PredefinedMember {
+				.Comment = "NOT AUTO-GENERATED PROPERTY",
+				.Type = ("static constexpr auto DecryptNamePool = " + NamePoolDecryptionStrToUse), .Offset = 0x0, .Size = 0x0, .ArrayDim = 0x1, .Alignment = alignof(void*),
+				.bIsStatic = true, .bIsZeroSizeMember = true, .bIsBitField = false, .BitIndex = 0xFF
+			},
 			PredefinedMember {
 				.Comment = "NOT AUTO-GENERATED PROPERTY",
 				.Type = "constexpr uint32", .Name = "FNameEntryStride", .Offset = 0x0, .Size = sizeof(uint32), .ArrayDim = 0x1, .Alignment = alignof(uint32),

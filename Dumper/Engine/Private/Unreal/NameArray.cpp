@@ -11,6 +11,22 @@
 
 uint8* NameArray::GNames = nullptr;
 
+void NameArray::InitDecryption(uint8_t* (*DecryptionFunction)(uint8_t* RawEntryPtr), const char* DecryptionLambdaAsStr)
+{
+    LogInfo("Initializing FNameEntry decryption: %s", DecryptionLambdaAsStr);
+    DecryptName = DecryptionFunction;
+    DecryptionLambdaStr = DecryptionLambdaAsStr;
+    LogSuccess("FNameEntry decryption initialized");
+}
+
+void NameArray::InitPoolDecryption(uintptr_t (*DecryptionFunction)(uintptr_t EncryptedNamePoolData), const char* DecryptionLambdaAsStr)
+{
+    LogInfo("Initializing NamePoolData pointer decryption: %s", DecryptionLambdaAsStr);
+    DecryptNamePool = DecryptionFunction;
+    NamePoolDecryptionLambdaStr = DecryptionLambdaAsStr;
+    LogSuccess("NamePoolData pointer decryption initialized");
+}
+
 FNameEntry::FNameEntry(void* Ptr)
     : Address((uint8*)Ptr)
 {
@@ -53,6 +69,9 @@ void FNameEntry::Init(const uint8* FirstChunkPtr, int64 NameEntryStringOffset)
          * NameLen == 0 indicates a numbered entry referencing a base by index. */
         GetStr = [](uint8* NameEntry) -> UnrealString
         {
+            // Per-game FName decryption hook (no-op by default).
+            NameEntry = NameArray::DecryptName(NameEntry);
+
             const uint16 HeaderWithoutNumber = *reinterpret_cast<uint16*>(NameEntry + Off::FNameEntry::NamePool::HeaderOffset);
             const int32 NameLen = HeaderWithoutNumber >> 6;
 
@@ -119,6 +138,9 @@ void FNameEntry::Init(const uint8* FirstChunkPtr, int64 NameEntryStringOffset)
 
         GetStr = [](uint8* NameEntry) -> UnrealString
         {
+            // Per-game FName decryption hook (no-op by default).
+            NameEntry = NameArray::DecryptName(NameEntry);
+
             const int32 NameIdx = *reinterpret_cast<int32*>(NameEntry + Off::FNameEntry::NameArray::IndexOffset);
             const void* NameString = reinterpret_cast<void*>(NameEntry + Off::FNameEntry::NameArray::StringOffset);
 
@@ -453,12 +475,21 @@ bool NameArray::TryInit(bool bIsTestOnly)
         FNameEntry::Init();
         return true;
     }
-    else if (bFoundnamePool && NameArray::InitializeNamePool(reinterpret_cast<uint8*>(GNamesAddress)))
+    else if (bFoundnamePool)
     {
-        GNames = GNamesAddress;
-        Settings::Internal::bUseNamePool = true;
-        /* FNameEntry::Init() was moved into NameArray::InitializeNamePool to avoid duplicated logic */
-        return true;
+        // Apply per-game NamePoolData pointer decryption (PUBG/Valorant-style indirection).
+        // Default is identity, so no-op for games that don't need it.
+        uint8* DecryptedAddr = reinterpret_cast<uint8*>(DecryptNamePool(reinterpret_cast<uintptr_t>(GNamesAddress)));
+        if (DecryptedAddr != GNamesAddress)
+            LogInfo("DecryptNamePool: %p -> %p", (void*)GNamesAddress, (void*)DecryptedAddr);
+
+        if (NameArray::InitializeNamePool(DecryptedAddr))
+        {
+            GNames = DecryptedAddr;
+            Settings::Internal::bUseNamePool = true;
+            /* FNameEntry::Init() was moved into NameArray::InitializeNamePool to avoid duplicated logic */
+            return true;
+        }
     }
 
     //GNames = nullptr;
@@ -516,12 +547,20 @@ bool NameArray::TryInit(int32 OffsetOverride, bool bIsNamePool, const char* cons
         FNameEntry::Init();
         return true;
     }
-    else if (bFoundnamePool && NameArray::InitializeNamePool(reinterpret_cast<uint8*>(GNamesAddress)))
+    else if (bFoundnamePool)
     {
-        GNames = GNamesAddress;
-        Settings::Internal::bUseNamePool = true;
-        /* FNameEntry::Init() was moved into NameArray::InitializeNamePool to avoid duplicated logic */
-        return true;
+        // Apply per-game NamePoolData pointer decryption (PUBG/Valorant-style indirection).
+        uint8* DecryptedAddr = reinterpret_cast<uint8*>(DecryptNamePool(reinterpret_cast<uintptr_t>(GNamesAddress)));
+        if (DecryptedAddr != GNamesAddress)
+            LogInfo("DecryptNamePool: %p -> %p", (void*)GNamesAddress, (void*)DecryptedAddr);
+
+        if (NameArray::InitializeNamePool(DecryptedAddr))
+        {
+            GNames = DecryptedAddr;
+            Settings::Internal::bUseNamePool = true;
+            /* FNameEntry::Init() was moved into NameArray::InitializeNamePool to avoid duplicated logic */
+            return true;
+        }
     }
 
     LogError("The address was overwritten, but couldn't be used. This might be due to GNames-encryption.\n");
