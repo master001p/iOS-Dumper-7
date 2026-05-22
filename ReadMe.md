@@ -1,115 +1,223 @@
 # iOS-Dumper-7
 
-**iOS-Dumper-7** is a runtime SDK generator for Unreal Engine games running on iOS. It injects into the game process to dynamically analyze memory, resolve offsets, and generate a full C++ SDK, IDA scripts, and symbol dumps.
+**iOS-Dumper-7** is a runtime SDK generator for Unreal Engine games on iOS / arm64. It loads as a dylib inside the game process, scans memory to discover the engine's reflection layout, then emits a complete C++ SDK, IDA mapping files, JSON metadata, and a single-header summary of every offset it found.
 
-## Features
-
-* **Runtime Generation**: Generates C++ SDK headers, IDA Mappings (`.idmap`), and JSON dumps directly on the device.
-* **Dynamic Offset Scanning**: Automatically finds `GObjects`, `GNames`, and `UWorld` without requiring hardcoded offsets for most games.
-* **Broad Compatibility**: Tested on Unreal Engine versions **4.17** to **4.26** (e.g., ARK 2.0, Ark Revamp, Special Forces 3).
-* **Floating UI**: Uses a draggable floating button to toggle the menu, avoiding conflict with game gestures.
-
-## Usage
-
-### 1. Build
-
-1. Open the project in **Xcode**.
-2. Select your signing identity.
-3. Build the project to generate the `.dylib` file (e.g., `Dumper.dylib`).
-
-### 2. Inject
-
-Use any signer (Sideloadly, ESign, GBox or whatever Signer that supports dylib injection) and inject the dylib
-
-### 3. Dump
-
-1. **Launch the game** and wait for the engine to fully load.
-2. After approximately **3 seconds**, a **Floating Logo Button** will appear on the screen.
-3. **Tap the Logo** to open the ImGui overlay.
-* *Note: You can drag the logo to move it if it obstructs the game UI.*
-
-
-4. Tap **Start Dump** in the menu.
-5. Wait for the process to complete.
-
-### 4. Output
-
-The generated files will be saved to your device's Documents directory (Make Sure to enable "Supports Document Browser" before signing):
-`/Documents/[GameVersion-GameName]/`
+Originally a port of [Encryqed/Dumper-7](https://github.com/Encryqed/Dumper-7) (Windows/x86_64) — heavily reworked for iOS/clang/Mach-O.
 
 ---
 
-## Configuration & Overrides
+## Features
 
-If the dumper fails to find offsets automatically (common in games with encryption or obfuscation), you can manually configure overrides in **`Dumper/Generator/Private/Generators/Generator.cpp`** inside the `Generator::InitEngineCore()` function.
+* **Runtime SDK generation** — C++ SDK headers, `.idmap` IDA scripts, Dumpspace JSON, USMAP, and a `UEOffsets.hpp` summary header.
+* **Dynamic offset scanning** — `GObjects`, `GNames`, `GWorld`, every `UObject`/`UStruct`/`UFunction`/`UProperty` field offset is discovered without hardcoded values for most games.
+* **ProcessEvent autodiscovery** — ports the iOS_UEDumper vtable-scoring algorithm: walks UObject's vtable and fingerprints each slot against UE-source-level invariants (`UObject.Index` load, `FUObjectItem` stride, `UFunction.FunctionFlags+1/+2` byte loads, `UStruct.Size` LDR, `ChildProperties` LDR, ADRP chain to GUObjectArray). No more manual `InitPE(idx)` for most games.
+* **FNamePool sharded-layout support** — `GetNumChunks` / `GetByteCursor` walk `Blocks[]` and the live block dynamically instead of relying on fixed-offset header fields that don't exist in every UE variant.
+* **Per-game decryption hooks** — three independent hooks for games that XOR/scramble different layers:
+  * `InitObjectArrayDecryption` — UObject pointer XOR (Back4Blood, Multiversus)
+  * `InitNameArrayDecryption` — per-FNameEntry content XOR (DeltaForce)
+  * `InitNamePoolDecryption` — NamePoolData pointer indirection (PUBG, Valorant)
+* **Floating ImGui menu** — a draggable logo appears ~3 seconds after launch; tap to open, drag if it covers game UI.
+* **UE 4.17 → 4.26** verified (ARK 2.0, ARK Revamp, Special Forces 3, ArenaBreakout, HOK: World / NGR).
 
-### 1. GObjects (Global Object Array)
+---
 
-If the auto-scan fails, provide the address and layout manually:
+## Quick Start
+
+### 1. Build
+
+1. Open `Dumper.xcodeproj` in Xcode.
+2. Set your signing identity.
+3. Build target `Dumper` → produces `Dumper.dylib` under `build/Release-iphoneos/`.
+
+### 2. Inject
+
+Sideload with any tool that supports dylib injection — Sideloadly, ESign, GBox, TrollStore + Choicy, etc.
+
+### 3. Dump
+
+1. Launch the game and wait for the engine to fully initialize (load past the splash).
+2. After ~3 seconds, a **floating logo** appears on screen.
+3. Tap the logo to open the menu. Drag it if it's in the way.
+4. Tap **Start Dump** and wait for completion.
+
+### 4. Output
+
+Files land under your app's Documents directory (enable "Supports Document Browser" in your Info.plist before signing so iOS Files.app can browse it):
+
+```
+/Documents/[GameVersion-GameName]/
+├── CppSDK/                    # Full C++ SDK headers (one .hpp per package)
+├── Mappings/                  # USMAP files
+├── IDAMappings/               # .idmap script for IDAExecFunctionsImporter plugin
+├── Dumpspace/                 # JSON reflection metadata
+├── GObjects-Dump.txt          # Flat list of every UObject + full path name
+├── GObjects-Dump-WithProperties.txt
+└── UEOffsets.hpp              # Single-header summary of every offset + runtime pointer (new)
+```
+
+`UEOffsets.hpp` is a self-contained header you can `#include` in any external tool (cheat client, debug helper, profile generator) to get every offset the dumper discovered in one place — UObject layout, FNamePool layout, every FProperty subclass field, ProcessEvent vtable index, GWorld/GObjects/GNames absolute addresses, etc.
+
+---
+
+## Configuration & Manual Overrides
+
+Most games work without configuration. For protected games — anti-cheat, custom encryption, non-standard FNamePool — edit `Generator::InitEngineCore()` in [`Dumper/Generator/Private/Generators/Generator.cpp`](Dumper/Generator/Private/Generators/Generator.cpp). The function ships with commented examples for each supported game.
+
+### GObjects (Global Object Array)
+
+If auto-scan fails, supply the address and layout:
 
 ```cpp
-// For older UE4 (Fixed Layout)
-ObjectArray::Init(0x12345678, FFixedUObjectArrayLayout {
-    .ObjectsOffset = 0x0,
+// UE 4.21+ / UE 5  (FChunkedFixedUObjectArray)
+ObjectArray::Init(/*GObjectsOffset*/ 0x0E23DAF0,
+                  /*ElementsPerChunk*/ 0x10000,
+                  FChunkedFixedUObjectArrayLayout{
+                      .ObjectsOffset     = 0x00,
+                      .MaxElementsOffset = 0x10,
+                      .NumElementsOffset = 0x14,
+                      .MaxChunksOffset   = 0x18,
+                      .NumChunksOffset   = 0x1C,
+                  },
+                  "NGR");  // optional Mach-O image name
+
+// UE <= 4.20  (FFixedUObjectArray)
+ObjectArray::Init(0x12345678, FFixedUObjectArrayLayout{
+    .ObjectsOffset    = 0x0,
     .MaxObjectsOffset = 0x8,
-    .NumObjectsOffset = 0xC
+    .NumObjectsOffset = 0xC,
 });
-
-// For UE4.21+ / UE5 (Chunked Layout)
-ObjectArray::Init(0x12345678, 0x10000 /* ElementsPerChunk */, FChunkedFixedUObjectArrayLayout {
-    .ObjectsOffset = 0x00,
-    .MaxElementsOffset = 0x10,
-    .NumElementsOffset = 0x14,
-    .MaxChunksOffset = 0x18,
-    .NumChunksOffset = 0x1C
-});
-
 ```
 
-### 2. GNames (Global Name Array)
+`GObjectsOffset` is the offset to the `ObjObjects` sub-struct (not the `FUObjectArray` wrapper), measured from imagebase. Same convention as Mj0x's iOS_UEDumper.
 
-If `GNames` is not found via pattern scanning, initialize it manually:
+### GNames (Global Name Array / FNamePool)
 
 ```cpp
-// Address, Mode, bIsNamePool, ModuleName (Optional)
-FName::Init(0x10203040, FName::EOffsetOverrideType::GNames, true /* true for NamePool */, "UAGame");
-
+// Args: Offset, EOffsetOverrideType::GNames, bIsNamePool, ModuleName (optional)
+FName::Init((int32)0x0E226540, FName::EOffsetOverrideType::GNames, true /*FNamePool*/, "NGR");
 ```
 
-### 3. Pointer Decryption
+For UE ≤ 4.22 (TNameEntryArray) pass `false` for the `bIsNamePool` argument.
 
-For games that encrypt pointers (e.g. IDK What Games Have ObjectArray Encrypted), define a decryption lambda:
+### ProcessEvent
+
+You usually shouldn't need this. The scorer runs by default and prints:
+
+```
+[Info] PE-Index (auto): 0x47
+[Info] PE-Offset: 0x...
+```
+
+If the scorer picks the wrong slot for a future game (rare — needs 7 fingerprints to disagree with the canonical UObject::ProcessEvent body), override manually:
 
 ```cpp
-// Example: XOR decryption
-ObjectArray::InitDecryption([](void* ObjPtr) -> uint8* {
+Off::InSDK::ProcessEvent::InitPE(70);  // direct vtable index
+```
+
+### Per-Game Decryption Hooks
+
+```cpp
+// (a) Back4Blood / Multiversus — UObject pointer XOR
+InitObjectArrayDecryption([](void* ObjPtr) -> uint8* {
     return reinterpret_cast<uint8*>(uint64(ObjPtr) ^ 0x8375ACDE);
 });
 
+// (b) DeltaForce — FNameEntry char-content XOR (per entry, per-Len key)
+InitNameArrayDecryption([](uint8_t* Entry) -> uint8_t* {
+    static thread_local uint8_t Scratch[0x402];
+    const uint16_t Header = *reinterpret_cast<uint16_t*>(Entry);
+    const int32_t  Len    = Header >> 6;
+    *reinterpret_cast<uint16_t*>(Scratch) = Header;
+    if (Len <= 0 || (Header & 1)) return Entry;
+    uint32_t Key = /* per-Len key derivation, see Generator.cpp comments */;
+    for (int i = 0; i < Len; ++i)
+        Scratch[2 + i] = (Key & 0x80) ^ ~Entry[2 + i];
+    return Scratch;
+});
+
+// (d) PUBG — ADRP+ADD points at a pointer chain that must be walked.
+//     Every dereference is guarded by IsBadReadPtr because corrupted /
+//     mid-init pool states return junk values that look pointer-ish.
+InitNamePoolDecryption([](uintptr_t Start) -> uintptr_t {
+    if (!Start || IsBadReadPtr((void*)Start) || IsBadReadPtr((void*)(Start + 8)))
+        return 0;
+
+    const int32_t Header = *reinterpret_cast<int32_t*>(Start);
+    if (Header < 100) return 0;                       // formula requires (Header - 100) / 3 >= 1
+    uint32_t Hops = (uint32_t)((Header - 100) / 3);
+    if (Hops == 0 || Hops > 16) return 0;             // bound the chain to our scratch array
+
+    uint64_t Chain[16]{};
+    Chain[Hops - 1] = *reinterpret_cast<int64_t*>(Start + 8);
+
+    while (Hops >= 2) {
+        const uintptr_t Next = Chain[Hops - 1];
+        if (!Next || IsBadReadPtr((void*)Next)) return 0;
+        Chain[Hops - 2] = *reinterpret_cast<int64_t*>(Next);
+        --Hops;
+    }
+    return Chain[0];
+});
 ```
 
-### 4. ProcessEvent
+Each `InitX(...)` macro auto-captures the lambda source string for future SDK emission.
 
-If the virtual table index for `ProcessEvent` is incorrect:
+---
 
-```cpp
-// Manually set the VTable index
-Off::InSDK::ProcessEvent::InitPE(69); 
+## Architecture
 
+| Stage | Driver | What happens |
+|---|---|---|
+| Inject | `+load` on `DumperObjC` | Dylib loaded by dyld; schedules a 3 s wakeup and returns immediately so it never blocks init. |
+| UI | ImGui + Metal/UIKit | Floating logo → menu overlay; rendered into the game's CAMetalLayer. |
+| Discover | `ObjectArray::Init` / `NameArray::TryInit` | Pattern + heuristic scans of `__TEXT` to find `GObjects` and `GNames`. Manual overrides via `Generator::InitEngineCore`. |
+| Probe offsets | `Off::Init` | Iterates known UE classes (`Object`, `Field`, `Struct`, …), reads byte patterns, derives every field offset (~40 values). |
+| ProcessEvent | `Off::InSDK::ProcessEvent::InitPE` | Walks UObject vtable, scores each function against 7 ProcessEvent fingerprints, picks the winner. |
+| GWorld | `Off::InSDK::World::InitGWorld` | Finds the `World` UObject, scans BSS for a `UWorld**` pointing at it. |
+| Generate | `CppGenerator`, `MappingGenerator`, … | Emits per-package SDK headers, USMAP, IDA mappings, Dumpspace JSON, and `UEOffsets.hpp`. |
+
+The Engine + OffsetFinder code is shared with upstream Dumper-7; the iOS-specific layer lives under [`Dumper/Platform/`](Dumper/Platform/) (ARM64 instruction decoding, Mach-O segment walks, vm-region reads).
+
+---
+
+## Project Layout
+
+```
+Dumper/
+├── main.mm                  # entry point, +load, menu lifecycle
+├── Settings.h               # global settings + per-game flags
+├── Menu/                    # ImGui menu code
+├── ImGui/                   # vendored ImGui (Metal + UIKit backends)
+├── Platform/                # iOS/arm64 platform layer (replaces upstream Windows surface)
+│   ├── Public/{Platform,Architecture}.h
+│   └── Private/{PlatformIOS,Arch_arm64}.{h,cpp}
+├── Engine/                  # UE reflection layer (shared shape with upstream)
+│   ├── Public/Unreal/       # NameArray, ObjectArray, UnrealTypes, wrappers
+│   └── Private/             # implementations
+└── Generator/               # SDK emitters
+    ├── Public/Generators/   # CppGenerator, MappingGenerator, IDAMappingGenerator, DumpspaceGenerator, Generator
+    └── Private/Generators/  # implementations
 ```
 
 ---
 
 ## Credits
 
-* **Encryqed**: Original creator of [Dumper-7](https://github.com/Encryqed/Dumper-7).
-* **Aethereux**: Ported and adapted for iOS/ARM64.
+* **[Encryqed](https://github.com/Encryqed)** — original [Dumper-7](https://github.com/Encryqed/Dumper-7) (Windows/x86_64).
+* **[MJx0](https://github.com/MJx0)** — [AndUEDumper](https://github.com/MJx0/AndUEDumper) / iOS_UEDumper — ProcessEvent vtable-scoring algorithm, KittyMemory.
+* **[Aethereux](https://github.com/Aethereux)** — iOS/ARM64 port + ongoing maintenance.
 
-* Contributions are Highly Appreciated for more improvements!
+Contributions welcome — open an issue or PR with the game name, UE version, and a snippet of `Generator::InitEngineCore` config that worked.
+
+---
 
 ## TODO
 
-- Find ProcessEvent Offset in the Memory (Not Manual Overwrites)
-- Find NamesArray (For UE below 4.22) in Memory
-- Fix Fallback Methods in Finding FNames (AppendString at UnrealTypes.cpp)
-
+- [x] Port ProcessEvent autodiscovery from iOS_UEDumper's vtable scorer.
+- [x] Make `GetNumChunks` / `GetByteCursor` layout-independent (walk `Blocks[]` instead of reading a fixed offset).
+- [x] Emit `UEOffsets.hpp` consolidating every discovered offset + runtime pointer.
+- [x] Per-game `InitNameArrayDecryption` / `InitNamePoolDecryption` hooks.
+- [ ] Auto-discover TNameEntryArray's layout for UE ≤ 4.22 games (currently heuristic, brittle on obfuscated builds).
+- [ ] Fix `FName::AppendString` fallback path in [`UnrealTypes.cpp`](Dumper/Engine/Private/Unreal/UnrealTypes.cpp).
+- [ ] Wire `DecryptionLambdaStr` / `NamePoolDecryptionLambdaStr` into `CppGenerator` so SDK output includes per-game decryption stubs automatically.
+- [ ] Auto-expose `Off::UFunction::NumParms` + `Off::UFunction::ParmsSize` (currently derived by walking Children).
